@@ -75,14 +75,17 @@ struct Scanner: Sendable {
         for (name, entries) in Dictionary(grouping: small, by: { $0.1.name }) {
             if Task.isCancelled { return }
             var bytes: Int64 = 0, files = 0
+            var info: [String: PathInfo] = [:]
             for (url, _) in entries {
                 let s = DiskSize.stats(of: url, isCancelled: { Task.isCancelled })
                 bytes += s.bytes; files += s.files
+                let mod = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                info[url.path] = PathInfo(bytes: s.bytes, modified: mod)
             }
             guard bytes > 0, let rule = entries.first?.1 else { continue }
             emit(.item(CleanItem(id: "artifact-agg:" + name, name: "\(name) (\(entries.count) folders)", paths: entries.map { $0.0.path },
                                  tier: rule.tier, group: Self.groupName(for: name), what: rule.what + " Found in \(entries.count) places under your project folders.",
-                                 afterDelete: rule.afterDelete, bytes: bytes, fileCount: files, modified: nil)))
+                                 afterDelete: rule.afterDelete, bytes: bytes, fileCount: files, modified: nil, pathInfo: info)))
         }
 
         emit(.status("Checking Downloads and Desktop…"))
@@ -150,6 +153,7 @@ struct Scanner: Sendable {
                                                          options: [.skipsHiddenFiles, .skipsPackageDescendants], errorHandler: { _, _ in true }) else { continue }
             var staleBytes: Int64 = 0, stalePaths: [String] = []
             var installerBytes: Int64 = 0, installerPaths: [String] = []
+            var info: [String: PathInfo] = [:]
 
             for case let f as URL in e {
                 if Task.isCancelled { return items }
@@ -163,21 +167,23 @@ struct Scanner: Sendable {
                                            afterDelete: "Gone for good unless you have another copy.", bytes: bytes, fileCount: 1, modified: mod))
                 }
                 if folderName == "Downloads", installerExt.contains(f.pathExtension.lowercased()) {
-                    installerBytes += bytes; installerPaths.append(f.path)
+                    installerBytes += bytes; installerPaths.append(f.path); info[f.path] = PathInfo(bytes: bytes, modified: mod)
                 }
                 if folderName == "Downloads", let mod, mod < cutoff {
-                    staleBytes += bytes; stalePaths.append(f.path)
+                    staleBytes += bytes; stalePaths.append(f.path); info[f.path] = PathInfo(bytes: bytes, modified: mod)
                 }
             }
             if installerBytes > 0 {
                 items.append(CleanItem(id: "agg:installers", name: "Installers and archives in Downloads", paths: installerPaths, tier: .review,
                                        group: "Downloads", what: "\(installerPaths.count) .dmg, .pkg, .zip and similar files. Usually already installed or unpacked.",
-                                       afterDelete: "Re-download from the source if you need them again.", bytes: installerBytes, fileCount: installerPaths.count, modified: nil))
+                                       afterDelete: "Re-download from the source if you need them again.", bytes: installerBytes, fileCount: installerPaths.count, modified: nil,
+                                       pathInfo: info.filter { installerPaths.contains($0.key) }))
             }
             if staleBytes > 0 {
                 items.append(CleanItem(id: "agg:stale-downloads", name: "Downloads untouched for \(staleDays) days", paths: stalePaths, tier: .review,
                                        group: "Downloads", what: "\(stalePaths.count) files not modified in the last \(staleDays) days.",
-                                       afterDelete: "Moved to Trash, so you can still recover them until you empty it.", bytes: staleBytes, fileCount: stalePaths.count, modified: nil))
+                                       afterDelete: "Moved to Trash, so you can still recover them until you empty it.", bytes: staleBytes, fileCount: stalePaths.count, modified: nil,
+                                       pathInfo: info.filter { stalePaths.contains($0.key) }))
             }
         }
         return items

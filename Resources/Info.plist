@@ -2,18 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>            <string>DeepClean</string>
-    <key>CFBundleDisplayName</key>     <string>DeepClean</string>
-    <key>CFBundleIdentifier</key>      <string>com.devkh.deepclean</string>
-    <key>CFBundleVersion</key>         <string>2</string>
-    <key>CFBundleShortVersionString</key> <string>0.1.1</string>
-    <key>CFBundleExecutable</key>      <string>DeepClean</string>
-    <key>CFBundlePackageType</key>     <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>  <string>14.0</string>
-    <key>CFBundleIconFile</key>       <string>AppIcon</string>
-    <key>NSAppleEventsUsageDescription</key> <string>DeepClean asks Finder to move root-owned apps to the Trash, so Finder can request your password.</string>
-    <key>NSHighResolutionCapable</key> <true/>
-    <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
-    <key>NSHumanReadableCopyright</key> <string>DevKH</string>
+	<key>CFBundleDisplayName</key>
+	<string>DeepClean</string>
+	<key>CFBundleExecutable</key>
+	<string>DeepClean</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.devkh.deepclean</string>
+	<key>CFBundleName</key>
+	<string>DeepClean</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>3</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>DeepClean asks Finder to move root-owned apps to the Trash, so Finder can request your password.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>DevKH</string>
 </dict>
 </plist>

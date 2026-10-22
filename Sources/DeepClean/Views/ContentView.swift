@@ -62,9 +62,20 @@ struct ContentView: View {
                     w.setContentSize(NSSize(width: 1540, height: 900)); w.center()
                     NSApp.activate(ignoringOtherApps: true); w.makeKeyAndOrderFront(nil)
                 }
-                vm.selection = [DemoData.selectedID]
+                vm.selection = Set((ProcessInfo.processInfo.environment["DEEPCLEAN_SELECT"] ?? DemoData.selectedID).split(separator: ",").map(String.init))
+                if let sel = vm.selection.first, let it = vm.items.first(where: { $0.id == sel }), it.isAggregate {
+                    try? await Task.sleep(for: .seconds(1))
+                    let root = PathNode.commonRoot(of: it.paths)
+                    vm.expandedFolders = [root + "/old-project"]
+                    vm.pathSelection = Set(it.paths.filter { $0.hasPrefix(root + "/Telegram Desktop/") })
+                }
                 try? await Task.sleep(for: .seconds(4))
                 if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
+            case "empty":
+                vm.fullDiskAccessMissing = false
+                try? await Task.sleep(for: .seconds(2))
+                if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
+                exit(0)
             case "menu":
                 try? await Task.sleep(for: .seconds(1))
                 for item in NSApp.mainMenu?.items.first?.submenu?.items ?? [] { print("menu: \(item.title)") }
@@ -327,11 +338,22 @@ struct ItemList: View {
         }
         .overlay {
             if vm.items.isEmpty && !vm.isScanning {
-                ContentUnavailableView(
-                    vm.hasScanned ? "Nothing found" : "No scan yet",
-                    systemImage: vm.hasScanned ? "sparkles" : "magnifyingglass",
-                    description: Text(vm.hasScanned ? "No junk in the known locations." : "Press Scan (⌘R) to look for junk. The scan is read-only.")
-                )
+                ContentUnavailableView {
+                    Label(vm.hasScanned ? "Nothing found" : "No scan yet",
+                          systemImage: vm.hasScanned ? "sparkles" : "magnifyingglass")
+                } description: {
+                    Text(vm.hasScanned ? "No junk in the known locations." : "Look for junk in the usual places. The scan is read-only.")
+                } actions: {
+                    Button {
+                        vm.scan()
+                    } label: {
+                        Label(vm.hasScanned ? "Scan Again" : "Scan", systemImage: "magnifyingglass")
+                            .padding(.horizontal, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .help("Scan for junk (⌘R)")
+                }
             }
         }
     }

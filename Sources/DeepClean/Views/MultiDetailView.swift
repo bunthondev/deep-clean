@@ -26,7 +26,17 @@ struct MultiDetailView: View {
             }
 
             List(items) { item in
-                ItemRow(item: item)
+                HStack(spacing: 10) {
+                    ItemRow(item: item)
+                    Button { vm.reveal(item) } label: { Image(systemName: "magnifyingglass") }
+                        .buttonStyle(.borderless).help("Reveal in Finder")
+                    Button { vm.selection.remove(item.id) } label: { Image(systemName: "xmark.circle") }
+                        .buttonStyle(.borderless).foregroundStyle(.secondary).help("Remove from selection")
+                }
+                .contextMenu {
+                    Button("Reveal in Finder") { vm.reveal(item) }
+                    Button("Remove from selection") { vm.selection.remove(item.id) }
+                }
             }
             .listStyle(.inset)
             .frame(minHeight: 160)

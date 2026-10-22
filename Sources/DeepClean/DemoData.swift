@@ -15,8 +15,22 @@ enum DemoData {
     }
 
     static let selectedID = "demo:/Library/Developer/Xcode/DerivedData"
+    private static let staleNames = ["invoice-data-2025-09-11.json", "download (1).png", "anydesk.dmg", "book.pdf", "result (27).xlsx",
+                                     "Style_official_3_Noir.zip", "screenshot 2025-03-02.png", "slides-final-v2.key", "logo.svg", "notes.txt"]
+    private static let stalePaths: [String] = (0..<40).map { i in
+        let sub = i < 10 ? "" : i < 22 ? "Telegram Desktop/" : i < 30 ? "old-project/assets/" : i < 34 ? "old-project/" : ""
+        return home + "/Downloads/" + sub + (i < 10 ? staleNames[i] : "report-\(i).pdf")
+    }
 
     static let items: [CleanItem] = [
+        CleanItem(id: "demo:downloads-stale", name: "Downloads untouched for 180 days",
+                  paths: stalePaths, tier: .review, group: "Downloads",
+                  what: "40 files not modified in the last 180 days.",
+                  afterDelete: "Moved to Trash, so you can still recover them until you empty it.",
+                  bytes: gb(1.9), fileCount: 40, modified: ago(200),
+                  pathInfo: Dictionary(uniqueKeysWithValues: stalePaths.enumerated().map { i, p in
+                      (p, PathInfo(bytes: mb(Double(3 + (i * 37) % 160)), modified: ago(181 + (i * 23) % 500)))
+                  })),
         item("Xcode DerivedData", "/Library/Developer/Xcode/DerivedData", .safe, "Dev tool caches",
              what: "Intermediate build products and indexes for every Xcode project you have opened.",
              after: Catalog.reinstall, bytes: gb(12.4), files: 184_302, days: 1),

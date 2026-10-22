@@ -1,8 +1,12 @@
-**New:** DeepClean > Check for Updates… looks up the latest GitHub release and offers the download.
-The app also checks quietly once a day at launch and only shows a dialog when a newer version exists.
-`DeepClean --update-check` does the same in text mode.
+**New:** file-level control inside grouped items such as "Downloads untouched for 180 days".
+The detail pane now shows every file as a folder tree with a checkbox, size, and days inactive.
+Tick single files or whole subfolders and use **Trash selected**; subfolders left empty are trashed too.
 
-**Install:** unzip, drag `DeepClean.app` to `/Applications`, then run
-`xattr -d com.apple.quarantine /Applications/DeepClean.app` once (the build is not notarized),
-or use System Settings > Privacy & Security > Open Anyway. Grant Full Disk Access when asked.
-Apple silicon, macOS 14 or newer.
+**Also:**
+- The empty start screen has a Scan button.
+- Multi-selection shows a Reveal in Finder button and a remove button on each selected item.
+- Installers and project-artifact groups carry per-path sizes and dates as well.
+
+**Install:** `brew install --cask bunthondev/tap/deepclean`, or unzip, drag `DeepClean.app` to `/Applications`,
+then run `xattr -d com.apple.quarantine /Applications/DeepClean.app` once (the build is not notarized).
+Grant Full Disk Access when asked. Apple silicon, macOS 14 or newer.

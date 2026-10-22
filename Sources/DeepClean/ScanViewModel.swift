@@ -25,6 +25,10 @@ final class ScanViewModel: ObservableObject {
     }
     /// Largest immediate children of an item, loaded on demand for the detail pane.
     @Published var children: [CleanItem.ID: [ChildStat]] = [:]
+    /// Paths ticked in the detail pane's file list of the current aggregate item.
+    @Published var pathSelection: Set<String> = []
+    /// Folders opened in that tree.
+    @Published var expandedFolders: Set<String> = []
     @Published var pendingTrash: [CleanItem]?
     @Published var errorMessage: String?
     @Published var fullDiskAccessMissing = FullDiskAccess.isMissing()
@@ -166,6 +170,14 @@ final class ScanViewModel: ObservableObject {
     func trash(_ list: [CleanItem]) {
         let total = list.reduce(0) { $0 + $1.bytes }
         status = "Moving \(list.count == 1 ? list[0].name : "\(list.count) items") to Trash…"
+        // Files picked out of an aggregate: remember the aggregate's root so subfolders they
+        // leave empty can be trashed too (e.g. the user ticked a whole subfolder of Downloads).
+        var cleanupRoot: [String: String] = [:]
+        for child in list where child.id.hasPrefix("child:") {
+            if let parent = items.first(where: { $0.isAggregate && $0.paths.contains(child.path) }) {
+                cleanupRoot[child.path] = PathNode.commonRoot(of: parent.paths)
+            }
+        }
         Task.detached(priority: .userInitiated) {
             var done: [CleanItem.ID] = []
             var collected: [String] = []
@@ -183,6 +195,18 @@ final class ScanViewModel: ObservableObject {
                 }
                 if ok { done.append(item.id) }
             }
+            // Trash subfolders emptied by the moves above, innermost first, never the root itself.
+            var emptied: Set<String> = []
+            for (path, root) in cleanupRoot where done.contains("child:" + path) {
+                var dir = (path as NSString).deletingLastPathComponent
+                while dir.hasPrefix(root + "/"), !emptied.contains(dir) {
+                    let left = (try? FileManager.default.contentsOfDirectory(atPath: dir))?.filter { $0 != ".DS_Store" } ?? ["?"]
+                    guard left.isEmpty else { break }
+                    if (try? FileManager.default.trashItem(at: URL(fileURLWithPath: dir), resultingItemURL: nil)) == nil { break }
+                    emptied.insert(dir)
+                    dir = (dir as NSString).deletingLastPathComponent
+                }
+            }
             let removed = Set(done), failures = collected
             await MainActor.run {
                 self.items.removeAll { removed.contains($0.id) }
@@ -198,6 +222,23 @@ final class ScanViewModel: ObservableObject {
                             self.items[i].bytes = max(0, self.items[i].bytes - child.bytes)
                         }
                     }
+                }
+                // A single path trashed out of an aggregate: drop it from the parent's list too.
+                let trashedPaths = Set(list.filter { $0.id.hasPrefix("child:") && removed.contains($0.id) }.flatMap(\.paths))
+                if !trashedPaths.isEmpty {
+                    for i in self.items.indices where self.items[i].isAggregate {
+                        let before = self.items[i].paths.count
+                        self.items[i].paths.removeAll { trashedPaths.contains($0) }
+                        let gone = before - self.items[i].paths.count
+                        if gone > 0 {
+                            self.items[i].fileCount = max(0, self.items[i].fileCount - gone)
+                            let freed = trashedPaths.reduce(Int64(0)) { $0 + (self.items[i].pathInfo[$1]?.bytes ?? 0) }
+                            self.items[i].bytes = max(0, self.items[i].bytes - freed)
+                            for p in trashedPaths { self.items[i].pathInfo[p] = nil }
+                        }
+                    }
+                    self.items.removeAll { $0.paths.isEmpty }
+                    self.pathSelection.subtract(trashedPaths)
                 }
                 self.selection.subtract(removed)
                 for id in removed { self.children[id] = nil }
