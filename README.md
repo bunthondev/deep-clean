@@ -32,7 +32,7 @@ and moves it to the Trash only after you confirm.
    and relaunch. Without it, Mail, Safari and Messages caches are skipped; everything else still works.
 
 To uninstall, quit DeepClean and move `/Applications/DeepClean.app` to the Trash. It stores only a small
-preferences file at `~/Library/Preferences/com.luma.deepclean.plist`.
+preferences file at `~/Library/Preferences/com.devkh.deepclean.plist`.
 
 ### Updating
 
