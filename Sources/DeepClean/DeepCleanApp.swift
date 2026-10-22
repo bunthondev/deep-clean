@@ -7,6 +7,10 @@ struct DeepCleanApp: App {
             CLI.run()
             exit(0)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--self-update"), i + 1 < CommandLine.arguments.count {
+            CLI.runSelfUpdate(CommandLine.arguments[i + 1])
+            exit(0)
+        }
         if CommandLine.arguments.contains("--apps") {
             CLI.runApps()
             exit(0)
@@ -47,6 +51,22 @@ struct DeepCleanApp: App {
 
 /// `DeepClean --cli` prints the junk scan; `DeepClean --apps` prints storage and the app list. Handy for testing and scripts.
 enum CLI {
+    /// `--self-update <zip url or path>`: installs that zip over this bundle and relaunches. For testing the installer.
+    static func runSelfUpdate(_ arg: String) {
+        setvbuf(stdout, nil, _IONBF, 0)
+        let url = arg.hasPrefix("http") || arg.hasPrefix("file:") ? URL(string: arg)! : URL(fileURLWithPath: arg)
+        let sem = DispatchSemaphore(value: 0)
+        Task.detached {
+            do {
+                let app = try await Installer.install(zip: url, expectedVersion: nil) { print("… \($0)") }
+                print("installed at \(app.path)")
+                Installer.relaunch(app)
+            } catch { print("install failed: \(error.localizedDescription)"); exit(1) }
+            sem.signal()
+        }
+        sem.wait()
+    }
+
     /// `--update-check`: prints the running and latest versions, exit code 1 when an update exists.
     static func runUpdateCheck() {
         let sem = DispatchSemaphore(value: 0)

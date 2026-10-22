@@ -101,17 +101,192 @@ enum Updater {
     @MainActor private static func offer(_ release: Release, allowSkip: Bool) {
         let a = NSAlert()
         a.messageText = "DeepClean \(release.version) is available"
-        var text = "You have \(currentVersion). Download the new version, unzip it and replace the app in Applications."
+        let canInstall = release.zip != nil && Installer.canReplaceRunningApp
+        var text = canInstall
+            ? "You have \(currentVersion). The update is installed in place and DeepClean reopens by itself."
+            : "You have \(currentVersion). Download the new version, unzip it and replace the app in Applications."
         let notes = release.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !notes.isEmpty { text += "\n\n" + String(notes.prefix(600)) }
         a.informativeText = text
-        a.addButton(withTitle: "Download")
+        a.addButton(withTitle: canInstall ? "Install and Relaunch" : "Download")
         a.addButton(withTitle: "Later")
         if allowSkip { a.addButton(withTitle: "Skip This Version") }
         switch a.runModal() {
-        case .alertFirstButtonReturn: NSWorkspace.shared.open(release.zip ?? release.page)
+        case .alertFirstButtonReturn:
+            if canInstall, let zip = release.zip { Installer.installAndRelaunch(zip: zip, version: release.version) }
+            else { NSWorkspace.shared.open(release.zip ?? release.page) }
         case .alertThirdButtonReturn: UserDefaults.standard.set(release.version, forKey: skippedKey)
         default: break
         }
     }
+}
+
+/// Downloads a release zip, checks the bundle inside, swaps it over the running app and relaunches.
+/// Plain file moves, no helper tool: it works wherever the user can already write (Applications
+/// owned by them, or a Homebrew cask install).
+enum Installer {
+    enum InstallError: LocalizedError {
+        case badDownload(Int), noBundle, wrongBundle(String), wrongVersion(String, String), signature(String), translocated
+        var errorDescription: String? {
+            switch self {
+            case .badDownload(let c): return "Download failed with status \(c)."
+            case .noBundle: return "The download did not contain DeepClean.app."
+            case .wrongBundle(let id): return "The download contains a different app (\(id))."
+            case .wrongVersion(let got, let want): return "The download is version \(got), expected \(want)."
+            case .signature(let why): return "The downloaded app failed its signature check: \(why)"
+            case .translocated: return "DeepClean is running from a temporary location. Move it to Applications first."
+            }
+        }
+    }
+
+    /// False when the running bundle cannot sensibly be replaced (Gatekeeper translocation, or a
+    /// folder the user cannot write to).
+    static var canReplaceRunningApp: Bool {
+        let url = Bundle.main.bundleURL
+        guard url.pathExtension == "app", !url.path.contains("/AppTranslocation/") else { return false }
+        return FileManager.default.isWritableFile(atPath: url.deletingLastPathComponent().path)
+    }
+
+    @MainActor static func installAndRelaunch(zip: URL, version: String) {
+        let progress = ProgressPanel(title: "Installing DeepClean \(version)…")
+        progress.show("Downloading…")
+        Task {
+            do {
+                let newApp = try await install(zip: zip, expectedVersion: version) { stage in
+                    Task { @MainActor in progress.show(stage) }
+                }
+                progress.show("Relaunching…")
+                relaunch(newApp)
+            } catch {
+                progress.close()
+                let a = NSAlert()
+                a.alertStyle = .warning
+                a.messageText = "Could not install the update"
+                a.informativeText = error.localizedDescription + "\n\nYou can download it and replace the app yourself."
+                a.addButton(withTitle: "Download Manually")
+                a.addButton(withTitle: "Cancel")
+                if a.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(zip) }
+            }
+        }
+    }
+
+    /// Does the work and returns the path of the installed bundle (same place as the running one).
+    /// `expectedVersion` nil skips the version check (used by `--self-update`).
+    static func install(zip: URL, expectedVersion: String?, stage: @escaping @Sendable (String) -> Void) async throws -> URL {
+        let fm = FileManager.default
+        let current = Bundle.main.bundleURL
+        guard !current.path.contains("/AppTranslocation/") else { throw InstallError.translocated }
+        let work = fm.temporaryDirectory.appendingPathComponent("DeepClean-update-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: work) }
+
+        // Download (or copy, for a file: URL used in tests).
+        let zipFile = work.appendingPathComponent("update.zip")
+        if zip.isFileURL {
+            try fm.copyItem(at: zip, to: zipFile)
+        } else {
+            var req = URLRequest(url: zip)
+            req.setValue("DeepClean/\(Updater.currentVersion)", forHTTPHeaderField: "User-Agent")
+            req.timeoutInterval = 60
+            let (tmp, resp) = try await URLSession.shared.download(for: req)
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 { throw InstallError.badDownload(http.statusCode) }
+            try fm.moveItem(at: tmp, to: zipFile)
+        }
+
+        stage("Unpacking…")
+        let unpacked = work.appendingPathComponent("unpacked", isDirectory: true)
+        try run("/usr/bin/ditto", ["-x", "-k", zipFile.path, unpacked.path])
+        guard let newApp = (try? fm.contentsOfDirectory(at: unpacked, includingPropertiesForKeys: nil))?
+                .first(where: { $0.pathExtension == "app" }) else { throw InstallError.noBundle }
+
+        stage("Checking…")
+        let plist = newApp.appendingPathComponent("Contents/Info.plist")
+        let info = NSDictionary(contentsOf: plist) as? [String: Any] ?? [:]
+        let newID = info["CFBundleIdentifier"] as? String ?? "?"
+        guard newID == Bundle.main.bundleIdentifier else { throw InstallError.wrongBundle(newID) }
+        let newVersion = info["CFBundleShortVersionString"] as? String ?? "?"
+        if let expectedVersion, newVersion != expectedVersion { throw InstallError.wrongVersion(newVersion, expectedVersion) }
+        do { try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path]) }
+        catch { throw InstallError.signature(error.localizedDescription) }
+        try? run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
+
+        stage("Installing…")
+        let dir = current.deletingLastPathComponent()
+        let backup = dir.appendingPathComponent(".\(current.deletingPathExtension().lastPathComponent)-old-\(Updater.currentVersion).app")
+        try? fm.removeItem(at: backup)
+        try fm.moveItem(at: current, to: backup)
+        do {
+            try fm.moveItem(at: newApp, to: current)
+        } catch {
+            try? fm.moveItem(at: backup, to: current)   // put the old one back
+            throw error
+        }
+        pendingCleanup = backup
+        return current
+    }
+
+    /// Old bundle to delete once the new one is running. Removed by the relaunch script.
+    nonisolated(unsafe) private static var pendingCleanup: URL?
+
+    /// Waits for this process to exit, opens the new bundle, deletes the old one, then quits the app.
+    static func relaunch(_ app: URL) {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let cleanup = pendingCleanup.map { "/bin/rm -rf \(shellQuote($0.path))" } ?? "true"
+        let script = "while /bin/kill -0 \(pid) 2>/dev/null; do /bin/sleep 0.2; done; /usr/bin/open \(shellQuote(app.path)); \(cleanup)"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", script]
+        try? p.run()
+        if let app = NSApp, app.isRunning { DispatchQueue.main.async { app.terminate(nil) } } else { exit(0) }
+    }
+
+    private static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+    private struct ToolError: LocalizedError {
+        let output: String
+        var errorDescription: String? { output }
+    }
+
+    private static func run(_ tool: String, _ args: [String]) throws {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
+        let pipe = Pipe()
+        p.standardError = pipe; p.standardOutput = pipe
+        try p.run()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        if p.terminationStatus != 0 {
+            throw ToolError(output: String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "exit \(p.terminationStatus)")
+        }
+    }
+}
+
+/// Small floating panel with a spinner and a one-line status, shown while an update installs.
+@MainActor final class ProgressPanel {
+    private let panel: NSPanel
+    private let label = NSTextField(labelWithString: "")
+
+    init(title: String) {
+        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 92),
+                        styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.title = title
+        panel.isFloatingPanel = true
+        panel.isReleasedWhenClosed = false
+        let spinner = NSProgressIndicator(frame: NSRect(x: 20, y: 36, width: 32, height: 32))
+        spinner.style = .spinning
+        spinner.startAnimation(nil)
+        label.frame = NSRect(x: 64, y: 42, width: 276, height: 20)
+        label.font = .systemFont(ofSize: 13)
+        panel.contentView?.addSubview(spinner)
+        panel.contentView?.addSubview(label)
+        panel.center()
+    }
+
+    func show(_ text: String) {
+        label.stringValue = text
+        if !panel.isVisible { panel.orderFront(nil) }
+    }
+
+    func close() { panel.orderOut(nil) }
 }
