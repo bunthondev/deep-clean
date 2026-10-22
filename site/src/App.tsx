@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 const REPO = 'bunthondev/deep-clean'
 const RELEASES = `https://github.com/${REPO}/releases/latest`
-const BREW = 'brew install --cask --no-quarantine bunthondev/tap/deepclean'
+const BREW = 'brew install --cask bunthondev/tap/deepclean'
 
 type Tier = 'safe' | 'review' | 'personal'
 
@@ -311,8 +311,8 @@ export default function App() {
                 <code>{BREW}</code>
               </pre>
               <p className="install-note">
-                One command, and <code>brew upgrade --cask deepclean</code> keeps it current. The
-                <code>--no-quarantine</code> flag skips the Gatekeeper step below.
+                One command, and <code>brew upgrade --cask deepclean</code> keeps it current. The cask clears the
+                Gatekeeper flag for you, so step 2 below is not needed.
               </p>
               <h3 className="install-option">Or download it yourself</h3>
               <ol className="install-steps">

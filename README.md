@@ -24,11 +24,11 @@ and moves it to the Trash only after you confirm.
 ### With Homebrew
 
 ```sh
-brew install --cask --no-quarantine bunthondev/tap/deepclean
+brew install --cask bunthondev/tap/deepclean
 ```
 
-`--no-quarantine` skips the Gatekeeper block described below. Leave it out if you prefer to clear the
-flag yourself. Update later with `brew upgrade --cask deepclean`.
+The cask clears the Gatekeeper quarantine flag after install, so the app opens right away and the
+manual step below is not needed. Update later with `brew upgrade --cask deepclean`.
 
 ### Manual download
 
