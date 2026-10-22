@@ -41,8 +41,10 @@ preferences file at `~/Library/Preferences/com.devkh.deepclean.plist`.
 
 ### Updating
 
-There is no auto-update yet. Download the new zip from the releases page and replace the app in
-`/Applications`. Repeat the quarantine step above after each update.
+**DeepClean > Check for Updates…** asks GitHub for the latest release and offers the download when a
+newer version exists. The app also checks quietly once a day at launch and only speaks up when there is
+something new (you can skip a version). Installing is manual: unzip, replace the app in `/Applications`,
+and repeat the quarantine step above. The check sends one request to `api.github.com` and nothing else.
 
 ## What it scans
 
@@ -128,6 +130,7 @@ The same binary has text-only modes, handy for scripts or quick checks:
 /Applications/DeepClean.app/Contents/MacOS/DeepClean --apps     # storage + 15 largest apps with leftovers
 /Applications/DeepClean.app/Contents/MacOS/DeepClean --procs    # 15 biggest process groups
 /Applications/DeepClean.app/Contents/MacOS/DeepClean --system   # one CPU / memory / battery reading
+/Applications/DeepClean.app/Contents/MacOS/DeepClean --update-check  # exit 1 when a newer release exists
 ```
 
 ## Build from source
@@ -157,7 +160,8 @@ A paid Developer ID certificate works the same way and is needed only to notariz
 
 ```
 Sources/DeepClean/
-  DeepCleanApp.swift   app entry + --cli / --apps / --procs / --system modes
+  DeepCleanApp.swift   app entry + --cli / --apps / --procs / --system / --update-check modes
+  Updater.swift        GitHub Releases check (menu item + daily quiet check)
   Models.swift         Tier, CleanItem, formatters
   Catalog.swift        known junk paths and project artifact rules
   DiskSize.swift       fast allocated-size walker
@@ -187,7 +191,7 @@ Screen Recording permission is needed. `demo` does the same with fixed sample da
 and is how the README screenshots are made; add `DEEPCLEAN_APPEARANCE=light` for the light one, then
 `swift docs/frame-screenshot.swift in.png out.png` adds the rounded corners and shadow. `procs-click` sends a synthetic click to a row through the
 window (a real AppKit event, no Accessibility permission needed). Other modes: `procs`,
-`procs-noselect`, `apps`. See `DebugHooks.swift`.
+`procs-noselect`, `apps`, `menu` (prints the app menu and quits). See `DebugHooks.swift`.
 
 ### Notes for contributors
 

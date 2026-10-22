@@ -65,6 +65,10 @@ struct ContentView: View {
                 vm.selection = [DemoData.selectedID]
                 try? await Task.sleep(for: .seconds(4))
                 if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
+            case "menu":
+                try? await Task.sleep(for: .seconds(1))
+                for item in NSApp.mainMenu?.items.first?.submenu?.items ?? [] { print("menu: \(item.title)") }
+                exit(0)
             case "junk":
                 vm.scan()
                 try? await Task.sleep(for: .seconds(30))

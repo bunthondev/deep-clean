@@ -19,20 +19,51 @@ struct DeepCleanApp: App {
             CLI.runProcs()
             exit(0)
         }
+        if CommandLine.arguments.contains("--update-check") {
+            CLI.runUpdateCheck()
+            exit(0)
+        }
     }
 
     var body: some Scene {
         WindowGroup("DeepClean") {
             ContentView()
                 .frame(minWidth: 900, minHeight: 540)
+                .task {
+                    guard ProcessInfo.processInfo.environment["DEEPCLEAN_DEBUG"] == nil else { return }
+                    try? await Task.sleep(for: .seconds(5))
+                    Updater.checkQuietlyIfDue()
+                }
         }
         .windowResizability(.contentSize)
-        .commands { CommandGroup(replacing: .newItem) {} }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updater.checkInteractively() }
+            }
+        }
     }
 }
 
 /// `DeepClean --cli` prints the junk scan; `DeepClean --apps` prints storage and the app list. Handy for testing and scripts.
 enum CLI {
+    /// `--update-check`: prints the running and latest versions, exit code 1 when an update exists.
+    static func runUpdateCheck() {
+        let sem = DispatchSemaphore(value: 0)
+        var newer = false
+        Task.detached {
+            do {
+                let r = try await Updater.fetchLatest()
+                newer = Updater.isNewer(r.version, than: Updater.currentVersion)
+                print("installed \(Updater.currentVersion), latest \(r.version) -> \(newer ? "update available" : "up to date")")
+                print("page: \(r.page)"); if let z = r.zip { print("zip:  \(z)") }
+            } catch { print("check failed: \(error.localizedDescription)") }
+            sem.signal()
+        }
+        sem.wait()
+        if newer { exit(1) }
+    }
+
     static func runProcs() {
         let sampler = ProcessSampler()
         _ = sampler.sample()
