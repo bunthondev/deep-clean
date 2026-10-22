@@ -52,8 +52,10 @@ struct ContentView: View {
                 vm.selectedAppID = vm.filteredApps.first?.id
             case "junk":
                 vm.scan()
-                try? await Task.sleep(for: .seconds(6))
+                try? await Task.sleep(for: .seconds(30))
                 vm.selection = Set(vm.filtered.prefix(1).map(\.id))
+                try? await Task.sleep(for: .seconds(2))
+                if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
             default: break
             }
         }
