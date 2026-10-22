@@ -1,0 +1,53 @@
+import SwiftUI
+
+/// Shown when several items are selected: a summary plus one Trash action for all of them.
+struct MultiDetailView: View {
+    let items: [CleanItem]
+    @ObservedObject var vm: ScanViewModel
+
+    private var trashable: [CleanItem] { items.filter { $0.tier != .personal } }
+    private var skipped: Int { items.count - trashable.count }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(items.count) items selected").font(.title2).fontWeight(.semibold)
+                Text(Format.size(items.reduce(0) { $0 + $1.bytes }) + " in total").foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 16) {
+                ForEach(Tier.allCases) { tier in
+                    let n = items.filter { $0.tier == tier }.count
+                    if n > 0 {
+                        Label("\(n) \(tier.title.lowercased())", systemImage: tier.symbol)
+                            .foregroundStyle(tier.color).font(.callout)
+                    }
+                }
+            }
+
+            List(items) { item in
+                ItemRow(item: item)
+            }
+            .listStyle(.inset)
+            .frame(minHeight: 160)
+
+            if skipped > 0 {
+                Label("\(skipped) personal item\(skipped == 1 ? "" : "s") will be skipped. Personal data is report-only.", systemImage: "info.circle")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ActionBar {
+                Button("Clear selection") { vm.selection = [] }
+                Spacer()
+                Button(role: .destructive) { vm.askToTrash(trashable) } label: {
+                    Label("Move \(trashable.count) items to Trash…", systemImage: "trash")
+                }
+                .disabled(trashable.isEmpty)
+            }
+        }
+    }
+}

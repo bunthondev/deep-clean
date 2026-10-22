@@ -1,0 +1,4 @@
+.build/
+DeepClean.app/
+*.xcodeproj
+.DS_Store
