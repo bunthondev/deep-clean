@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 
 /// Checks GitHub Releases for a newer build. No framework, no background daemon: it asks the
@@ -18,6 +19,8 @@ enum Updater {
         let version: String
         let page: URL
         let zip: URL?
+        /// Detached Ed25519 signature of the zip (`<zip>.sig` asset), made by release.sh.
+        let sig: URL?
         let notes: String
     }
 
@@ -45,8 +48,10 @@ enum Updater {
               let pageString = json["html_url"] as? String, let page = URL(string: pageString) else { throw CheckError.noRelease }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         let assets = json["assets"] as? [[String: Any]] ?? []
-        let zip = assets.compactMap { $0["browser_download_url"] as? String }.first { $0.hasSuffix(".zip") }.flatMap(URL.init(string:))
-        return Release(version: version, page: page, zip: zip, notes: json["body"] as? String ?? "")
+        let urls = assets.compactMap { $0["browser_download_url"] as? String }
+        let zip = urls.first { $0.hasSuffix(".zip") }.flatMap(URL.init(string:))
+        let sig = urls.first { $0.hasSuffix(".zip.sig") }.flatMap(URL.init(string:))
+        return Release(version: version, page: page, zip: zip, sig: sig, notes: json["body"] as? String ?? "")
     }
 
     /// True when `a` is a newer semantic version than `b` (numeric, component-wise).
@@ -101,7 +106,7 @@ enum Updater {
     @MainActor private static func offer(_ release: Release, allowSkip: Bool) {
         let a = NSAlert()
         a.messageText = "DeepClean \(release.version) is available"
-        let canInstall = release.zip != nil && Installer.canReplaceRunningApp
+        let canInstall = release.zip != nil && release.sig != nil && Installer.canReplaceRunningApp
         var text = canInstall
             ? "You have \(currentVersion). The update is installed in place and DeepClean reopens by itself."
             : "You have \(currentVersion). Download the new version, unzip it and replace the app in Applications."
@@ -113,7 +118,7 @@ enum Updater {
         if allowSkip { a.addButton(withTitle: "Skip This Version") }
         switch a.runModal() {
         case .alertFirstButtonReturn:
-            if canInstall, let zip = release.zip { Installer.installAndRelaunch(zip: zip, version: release.version) }
+            if canInstall, let zip = release.zip, let sig = release.sig { Installer.installAndRelaunch(zip: zip, sig: sig, version: release.version) }
             else { NSWorkspace.shared.open(release.zip ?? release.page) }
         case .alertThirdButtonReturn: UserDefaults.standard.set(release.version, forKey: skippedKey)
         default: break
@@ -125,10 +130,16 @@ enum Updater {
 /// Plain file moves, no helper tool: it works wherever the user can already write (Applications
 /// owned by them, or a Homebrew cask install).
 enum Installer {
+    /// Public half of the Ed25519 key that release.sh signs every zip with. Private key stays on
+    /// the release machine (~/.config/deepclean/update-signing.pem). Builds are ad-hoc signed, so
+    /// this is what proves a download really came from the project.
+    static let updatePublicKey = "J88bI5lAX7cQzpSd3IKzc5TOdl8+syMjkKrTY8NpPFM="
+
     enum InstallError: LocalizedError {
-        case badDownload(Int), noBundle, wrongBundle(String), wrongVersion(String, String), signature(String), translocated
+        case badDownload(Int), noBundle, wrongBundle(String), wrongVersion(String, String), signature(String), translocated, notSigned
         var errorDescription: String? {
             switch self {
+            case .notSigned: return "The download is not signed with the DeepClean release key, so it was not installed."
             case .badDownload(let c): return "Download failed with status \(c)."
             case .noBundle: return "The download did not contain DeepClean.app."
             case .wrongBundle(let id): return "The download contains a different app (\(id))."
@@ -147,12 +158,12 @@ enum Installer {
         return FileManager.default.isWritableFile(atPath: url.deletingLastPathComponent().path)
     }
 
-    @MainActor static func installAndRelaunch(zip: URL, version: String) {
+    @MainActor static func installAndRelaunch(zip: URL, sig: URL, version: String) {
         let progress = ProgressPanel(title: "Installing DeepClean \(version)…")
         progress.show("Downloading…")
         Task {
             do {
-                let newApp = try await install(zip: zip, expectedVersion: version) { stage in
+                let newApp = try await install(zip: zip, sig: sig, expectedVersion: version) { stage in
                     Task { @MainActor in progress.show(stage) }
                 }
                 progress.show("Relaunching…")
@@ -172,7 +183,7 @@ enum Installer {
 
     /// Does the work and returns the path of the installed bundle (same place as the running one).
     /// `expectedVersion` nil skips the version check (used by `--self-update`).
-    static func install(zip: URL, expectedVersion: String?, stage: @escaping @Sendable (String) -> Void) async throws -> URL {
+    static func install(zip: URL, sig: URL, expectedVersion: String?, stage: @escaping @Sendable (String) -> Void) async throws -> URL {
         let fm = FileManager.default
         let current = Bundle.main.bundleURL
         guard !current.path.contains("/AppTranslocation/") else { throw InstallError.translocated }
@@ -180,18 +191,16 @@ enum Installer {
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: work) }
 
-        // Download (or copy, for a file: URL used in tests).
         let zipFile = work.appendingPathComponent("update.zip")
-        if zip.isFileURL {
-            try fm.copyItem(at: zip, to: zipFile)
-        } else {
-            var req = URLRequest(url: zip)
-            req.setValue("DeepClean/\(Updater.currentVersion)", forHTTPHeaderField: "User-Agent")
-            req.timeoutInterval = 60
-            let (tmp, resp) = try await URLSession.shared.download(for: req)
-            if let http = resp as? HTTPURLResponse, http.statusCode != 200 { throw InstallError.badDownload(http.statusCode) }
-            try fm.moveItem(at: tmp, to: zipFile)
-        }
+        try await fetch(zip, to: zipFile)
+        let sigFile = work.appendingPathComponent("update.zip.sig")
+        try await fetch(sig, to: sigFile)
+
+        // Nothing is unpacked before the release key has vouched for the bytes.
+        stage("Verifying…")
+        guard let keyData = Data(base64Encoded: updatePublicKey),
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: keyData),
+              key.isValidSignature(try Data(contentsOf: sigFile), for: try Data(contentsOf: zipFile)) else { throw InstallError.notSigned }
 
         stage("Unpacking…")
         let unpacked = work.appendingPathComponent("unpacked", isDirectory: true)
@@ -223,6 +232,17 @@ enum Installer {
         }
         pendingCleanup = backup
         return current
+    }
+
+    /// Downloads a URL to `dest`, or copies it when it is a local file (tests).
+    private static func fetch(_ url: URL, to dest: URL) async throws {
+        if url.isFileURL { try FileManager.default.copyItem(at: url, to: dest); return }
+        var req = URLRequest(url: url)
+        req.setValue("DeepClean/\(Updater.currentVersion)", forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 60
+        let (tmp, resp) = try await URLSession.shared.download(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode != 200 { throw InstallError.badDownload(http.statusCode) }
+        try FileManager.default.moveItem(at: tmp, to: dest)
     }
 
     /// Old bundle to delete once the new one is running. Removed by the relaunch script.

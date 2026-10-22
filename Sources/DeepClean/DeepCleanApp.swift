@@ -51,14 +51,16 @@ struct DeepCleanApp: App {
 
 /// `DeepClean --cli` prints the junk scan; `DeepClean --apps` prints storage and the app list. Handy for testing and scripts.
 enum CLI {
-    /// `--self-update <zip url or path>`: installs that zip over this bundle and relaunches. For testing the installer.
+    /// `--self-update <zip url or path>`: installs that zip (its `.sig` must sit beside it) over this
+    /// bundle and relaunches. For testing the installer.
     static func runSelfUpdate(_ arg: String) {
         setvbuf(stdout, nil, _IONBF, 0)
         let url = arg.hasPrefix("http") || arg.hasPrefix("file:") ? URL(string: arg)! : URL(fileURLWithPath: arg)
+        let sig = URL(string: url.absoluteString + ".sig")!
         let sem = DispatchSemaphore(value: 0)
         Task.detached {
             do {
-                let app = try await Installer.install(zip: url, expectedVersion: nil) { print("… \($0)") }
+                let app = try await Installer.install(zip: url, sig: sig, expectedVersion: nil) { print("… \($0)") }
                 print("installed at \(app.path)")
                 Installer.relaunch(app)
             } catch { print("install failed: \(error.localizedDescription)"); exit(1) }
