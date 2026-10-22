@@ -14,7 +14,7 @@ struct ContentView: View {
     private var splitView: some View {
         NavigationSplitView {
             Sidebar(vm: vm)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 220)
+                .navigationSplitViewColumnWidth(min: 240, ideal: 290)
         } content: {
             ContentColumn(vm: vm)
                 .navigationSplitViewColumnWidth(min: 340, ideal: 400)
@@ -50,6 +50,21 @@ struct ContentView: View {
                 vm.scanApps()
                 try? await Task.sleep(for: .seconds(4))
                 vm.selectedAppID = vm.filteredApps.first?.id
+            case "demo":
+                if ProcessInfo.processInfo.environment["DEEPCLEAN_APPEARANCE"] == "light" { NSApp.appearance = NSAppearance(named: .aqua) }
+                vm.fullDiskAccessMissing = false
+                vm.items = DemoData.items
+                vm.children[DemoData.selectedID] = DemoData.children
+                vm.hasScanned = true
+                vm.status = "\(vm.items.count) items, \(Format.size(vm.totalBytes)) found"
+                try? await Task.sleep(for: .seconds(1))
+                if let w = DebugHooks.window {
+                    w.setContentSize(NSSize(width: 1540, height: 900)); w.center()
+                    NSApp.activate(ignoringOtherApps: true); w.makeKeyAndOrderFront(nil)
+                }
+                vm.selection = [DemoData.selectedID]
+                try? await Task.sleep(for: .seconds(4))
+                if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
             case "junk":
                 vm.scan()
                 try? await Task.sleep(for: .seconds(30))

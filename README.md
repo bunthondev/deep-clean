@@ -13,6 +13,11 @@ and moves it to the Trash only after you confirm.
 - Also shows storage, CPU, memory, battery, running processes, and installed apps with their leftovers
 - Apple silicon, macOS 14 Sonoma or newer
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img src="docs/screenshot-light.png" alt="DeepClean main window: storage and system cards in the sidebar, junk list grouped by safety, detail pane for Xcode DerivedData">
+</picture>
+
 ## Install
 
 1. Download `DeepClean-<version>.zip` from the [latest release](https://github.com/bunthondev/deep-clean/releases/latest).
@@ -162,6 +167,7 @@ Sources/DeepClean/
   Processes.swift      per-process sampler (libproc + ps), grouping by app, quit / force quit
   ScanViewModel.swift  UI state, trash + reveal actions
   DebugHooks.swift     synthetic clicks + window snapshots for headless UI checks
+  DemoData.swift       sample items for screenshots (DEEPCLEAN_DEBUG=demo)
   Views/               ContentView (sidebar, list, banner), DetailView, MultiDetailView,
                        AppViews (storage card, app list, app detail), SystemCard, ProcessViews
 Resources/Info.plist
@@ -177,7 +183,9 @@ DEEPCLEAN_DEBUG=junk DEEPCLEAN_SNAPSHOT=/tmp/out.png ./DeepClean.app/Contents/Ma
 ```
 
 Runs a scan, selects the first row and writes a rendering of the window from inside the app, so no
-Screen Recording permission is needed. `procs-click` sends a synthetic click to a row through the
+Screen Recording permission is needed. `demo` does the same with fixed sample data (`DemoData.swift`)
+and is how the README screenshots are made; add `DEEPCLEAN_APPEARANCE=light` for the light one, then
+`swift docs/frame-screenshot.swift in.png out.png` adds the rounded corners and shadow. `procs-click` sends a synthetic click to a row through the
 window (a real AppKit event, no Accessibility permission needed). Other modes: `procs`,
 `procs-noselect`, `apps`. See `DebugHooks.swift`.
 
