@@ -1,11 +1,8 @@
-**New:** file-level control inside grouped items such as "Downloads untouched for 180 days".
-The detail pane now shows every file as a folder tree with a checkbox, size, and days inactive.
-Tick single files or whole subfolders and use **Trash selected**; subfolders left empty are trashed too.
+**Fixed:** the same project folder could appear several times in the junk list when project roots overlapped
+(for example a folder added twice through the picker, or a root nested inside another). Roots are now
+normalized and deduplicated, nested roots are dropped, and the scanner never reports the same path twice.
 
-**Also:**
-- The empty start screen has a Scan button.
-- Multi-selection shows a Reveal in Finder button and a remove button on each selected item.
-- Installers and project-artifact groups carry per-path sizes and dates as well.
+**Also:** `DeepClean --cli` scans the same project roots the app uses.
 
 **Install:** `brew install --cask bunthondev/tap/deepclean`, or unzip, drag `DeepClean.app` to `/Applications`,
 then run `xattr -d com.apple.quarantine /Applications/DeepClean.app` once (the build is not notarized).

@@ -22,6 +22,17 @@ struct Scanner: Sendable {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }()
 
+    /// Cleans a list of project roots: resolves symlinks and trailing slashes, drops repeats, and
+    /// drops any root that sits inside another one (it would be walked twice otherwise).
+    static func normalizeRoots(_ roots: [URL]) -> [URL] {
+        var seen: Set<String> = []
+        let unique = roots.map { $0.standardizedFileURL.resolvingSymlinksInPath() }
+            .filter { FileManager.default.fileExists(atPath: $0.path) && seen.insert($0.path).inserted }
+        return unique.filter { r in
+            !unique.contains { other in other.path != r.path && r.path.hasPrefix(other.path.hasSuffix("/") ? other.path : other.path + "/") }
+        }
+    }
+
     static func expand(_ p: String) -> URL {
         if p.hasPrefix("~") { return home.appendingPathComponent(String(p.dropFirst(2))) }
         return URL(fileURLWithPath: p)
@@ -56,7 +67,9 @@ struct Scanner: Sendable {
 
         emit(.status("Looking for build folders in projects…"))
         var found: [(URL, ArtifactRule)] = []
-        for root in projectRoots { findArtifacts(in: root, depth: 0, into: &found) }
+        for root in Self.normalizeRoots(projectRoots) { findArtifacts(in: root, depth: 0, into: &found) }
+        var seenPaths: Set<String> = []
+        found = found.filter { seenPaths.insert($0.0.path).inserted }
         let (small, big) = (found.filter { Catalog.aggregatedArtifacts.contains($0.1.name) }, found.filter { !Catalog.aggregatedArtifacts.contains($0.1.name) })
         emit(.status("Sizing \(big.count) project folders…"))
         await sizeConcurrently(big.map { (url, rule) in

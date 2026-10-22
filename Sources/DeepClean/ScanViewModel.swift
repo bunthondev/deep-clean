@@ -70,9 +70,9 @@ final class ScanViewModel: ObservableObject {
     private var task: Task<Void, Never>?
     private var childTasks: [CleanItem.ID: Task<Void, Never>] = [:]
 
-    static func loadProjectRoots() -> [URL] {
+    nonisolated static func loadProjectRoots() -> [URL] {
         if let saved = UserDefaults.standard.stringArray(forKey: "projectRoots") {
-            let urls = saved.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+            let urls = Scanner.normalizeRoots(saved.map { URL(fileURLWithPath: $0) })
             if !urls.isEmpty { return urls }
         }
         return Scanner.defaultProjectRoots
@@ -134,7 +134,7 @@ final class ScanViewModel: ObservableObject {
             for await event in scanner.run() {
                 switch event {
                 case .status(let s): status = s
-                case .item(let item): items.append(item)
+                case .item(let item): if !items.contains(where: { $0.id == item.id }) { items.append(item) }
                 case .done: break
                 }
             }
@@ -276,7 +276,7 @@ final class ScanViewModel: ObservableObject {
         panel.allowsMultipleSelection = true
         panel.message = "Choose folders that contain your code projects"
         if panel.runModal() == .OK {
-            for u in panel.urls where !projectRoots.contains(u) { projectRoots.append(u) }
+            projectRoots = Scanner.normalizeRoots(projectRoots + panel.urls)
         }
     }
 

@@ -114,7 +114,7 @@ enum CLI {
         let sem = DispatchSemaphore(value: 0)
         Task.detached {
             var items: [CleanItem] = []
-            for await e in Scanner(projectRoots: Scanner.defaultProjectRoots).run() {
+            for await e in Scanner(projectRoots: ScanViewModel.loadProjectRoots()).run() {
                 switch e {
                 case .status(let s): FileHandle.standardError.write(Data(("… " + s + "\n").utf8))
                 case .item(let i): items.append(i)
