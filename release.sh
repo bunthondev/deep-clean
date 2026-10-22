@@ -2,9 +2,29 @@
 # Builds DeepClean.app and zips it for a GitHub release.
 #   ./release.sh                 -> dist/DeepClean-<version>.zip
 #   SIGN_IDENTITY="..." ./release.sh
-# Then: gh release create v<version> dist/DeepClean-<version>.zip --title "DeepClean <version>" --notes-file RELEASE_NOTES.md
+#   ./release.sh --bump-cask     -> after `gh release create`, updates the Homebrew tap to this version
+#
+# Full flow: bump versions in Resources/Info.plist, ./release.sh, commit, git tag -a vX.Y.Z, push with tags,
+#   gh release create vX.Y.Z dist/DeepClean-X.Y.Z.zip --title "DeepClean X.Y.Z" --notes-file RELEASE_NOTES.md
+#   ./release.sh --bump-cask
 set -e
 cd "$(dirname "$0")"
+
+if [[ "$1" == "--bump-cask" ]]; then
+  VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)
+  URL="https://github.com/bunthondev/deep-clean/releases/download/v$VERSION/DeepClean-$VERSION.zip"
+  echo "Fetching $URL"
+  SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+  TAP=$(brew --repository bunthondev/tap 2>/dev/null || true)
+  [[ -d "$TAP" ]] || { echo "Tap not installed. Run: brew tap bunthondev/tap"; exit 1; }
+  CASK="$TAP/Casks/deepclean.rb"
+  sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/; s/^  sha256 \".*\"/  sha256 \"$SHA\"/" "$CASK"
+  (cd "$TAP" && git add Casks/deepclean.rb && git commit -qm "deepclean $VERSION" && git push -q origin HEAD)
+  echo "Cask updated to $VERSION ($SHA)"
+  brew audit --cask --online bunthondev/tap/deepclean && echo "Audit passed"
+  exit 0
+fi
+
 ./build.sh
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' DeepClean.app/Contents/Info.plist)
 mkdir -p dist

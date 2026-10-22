@@ -21,6 +21,17 @@ and moves it to the Trash only after you confirm.
 
 ## Install
 
+### With Homebrew
+
+```sh
+brew install --cask --no-quarantine bunthondev/tap/deepclean
+```
+
+`--no-quarantine` skips the Gatekeeper block described below. Leave it out if you prefer to clear the
+flag yourself. Update later with `brew upgrade --cask deepclean`.
+
+### Manual download
+
 1. Download `DeepClean-<version>.zip` from the [latest release](https://github.com/bunthondev/deep-clean/releases/latest).
 2. Double-click the zip to unpack it, then drag `DeepClean.app` into `/Applications`.
 3. The app is not notarized by Apple (it is a free, unsigned build), so the first launch is blocked by Gatekeeper. Either:
@@ -41,6 +52,8 @@ To uninstall, quit DeepClean and move `/Applications/DeepClean.app` to the Trash
 preferences file at `~/Library/Preferences/com.devkh.deepclean.plist`.
 
 ### Updating
+
+Homebrew users: `brew upgrade --cask deepclean`.
 
 **DeepClean > Check for Updates…** asks GitHub for the latest release and offers the download when a
 newer version exists. The app also checks quietly once a day at launch and only speaks up when there is
@@ -143,7 +156,7 @@ git clone https://github.com/bunthondev/deep-clean.git
 cd deep-clean
 ./build.sh          # builds DeepClean.app in this folder
 ./build.sh --run    # build and open it
-./release.sh        # build + dist/DeepClean-<version>.zip for a GitHub release
+./release.sh        # build + dist/DeepClean-<version>.zip for a GitHub release, then bumps the Homebrew cask
 ```
 
 ### Signing
@@ -203,6 +216,7 @@ window (a real AppKit event, no Accessibility permission needed). Other modes: `
 - `@State` is a macro in recent SDKs and its plugin ships only with full Xcode, so the view model
   uses `ObservableObject`/`@StateObject`. Keep it that way if you build with Command Line Tools.
 - Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist` before each release.
+- Release flow: `./release.sh`, commit, tag `vX.Y.Z`, push, `gh release create`, then `./release.sh --bump-cask` to publish the new version to the [Homebrew tap](https://github.com/bunthondev/homebrew-tap).
 
 ## License
 

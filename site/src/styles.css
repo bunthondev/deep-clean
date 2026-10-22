@@ -66,6 +66,8 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.9em;
 .download-large { align-items: center; text-align: center; }
 .download-large .download-row { justify-content: center; }
 .download-large .button { font-size: 1.08rem; padding: 0.95rem 1.6rem; }
+.download-brew { font-size: 0.92rem; color: var(--ink-2); margin: 0.2rem 0 0; }
+.download-brew code { font-size: 0.85rem; background: #fff; }
 
 /* Header */
 .top { position: sticky; top: 0; z-index: 10; background: rgba(255, 255, 255, 0.86); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
@@ -135,7 +137,11 @@ section { padding: clamp(3.5rem, 7vw, 6rem) 0; }
 .more-grid > div { background: #fff; border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 1.5rem; }
 
 .install-inner { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: clamp(2rem, 6vw, 5rem); align-items: start; }
-.install-steps { margin: 2rem 0 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 1.4rem; color: var(--ink-2); }
+.install-option { margin: 2rem 0 0.8rem; font-size: 1.05rem; }
+.brew { background: var(--ink); color: #e2e8f0; padding: 0.85rem 1rem; border-radius: var(--radius); overflow-x: auto; margin: 0; font-size: 0.9rem; }
+.brew code { background: none; border: 0; padding: 0; color: inherit; }
+.install-note { color: var(--ink-2); font-size: 0.95rem; margin: 0.7rem 0 0; }
+.install-steps { margin: 1rem 0 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 1.4rem; color: var(--ink-2); }
 .install-steps li { counter-increment: step; position: relative; padding-left: 2.8rem; }
 .install-steps li::before {
   content: counter(step); position: absolute; left: 0; top: 0.1em;

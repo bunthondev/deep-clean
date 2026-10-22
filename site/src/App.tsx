@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 const REPO = 'bunthondev/deep-clean'
 const RELEASES = `https://github.com/${REPO}/releases/latest`
+const BREW = 'brew install --cask --no-quarantine bunthondev/tap/deepclean'
 
 type Tier = 'safe' | 'review' | 'personal'
 
@@ -69,6 +70,11 @@ function DownloadButton({ release, large }: { release: Release | null | undefine
         {release === null && 'Free and open source. macOS 14 or newer, Apple silicon.'}
         {release && `Free and open source. ${mb ? `${mb} MB zip. ` : ''}macOS 14 or newer, Apple silicon.`}
       </p>
+      {large && (
+        <p className="download-brew">
+          or with Homebrew: <code>{BREW}</code>
+        </p>
+      )}
     </div>
   )
 }
@@ -300,6 +306,15 @@ export default function App() {
           <div className="wrap install-inner">
             <div>
               <h2>Install in a minute</h2>
+              <h3 className="install-option">With Homebrew</h3>
+              <pre className="brew">
+                <code>{BREW}</code>
+              </pre>
+              <p className="install-note">
+                One command, and <code>brew upgrade --cask deepclean</code> keeps it current. The
+                <code>--no-quarantine</code> flag skips the Gatekeeper step below.
+              </p>
+              <h3 className="install-option">Or download it yourself</h3>
               <ol className="install-steps">
                 <li>
                   <span>Download the zip and drag DeepClean into Applications.</span>
@@ -324,7 +339,7 @@ export default function App() {
             <div className="install-cta">
               <img src="icon.png" alt="" width="72" height="72" />
               <h3>DeepClean for Mac</h3>
-              <p>Swift and SwiftUI, no dependencies, under 3 MB. Updates are offered from inside the app.</p>
+              <p>Swift and SwiftUI, no dependencies, under 3 MB. Updates come through Homebrew or from inside the app.</p>
               <DownloadButton release={release} />
             </div>
           </div>
