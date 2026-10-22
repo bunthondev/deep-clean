@@ -71,6 +71,9 @@ struct ContentView: View {
                 }
                 try? await Task.sleep(for: .seconds(4))
                 if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
+            case "closewin":
+                try? await Task.sleep(for: .seconds(2))
+                DebugHooks.window?.performClose(nil)
             case "empty":
                 vm.fullDiskAccessMissing = false
                 try? await Task.sleep(for: .seconds(2))

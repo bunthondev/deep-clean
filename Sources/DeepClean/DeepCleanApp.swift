@@ -1,7 +1,14 @@
 import SwiftUI
 
+/// Quit when the window closes. A single-window utility has nothing to do in the Dock without it.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+}
+
 @main
 struct DeepCleanApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         if CommandLine.arguments.contains("--cli") {
             CLI.run()
