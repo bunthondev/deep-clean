@@ -12,6 +12,7 @@ and moves it to the Trash only after you confirm.
 - Built for developers: package manager caches, `node_modules`, build output, simulators, AI tool caches, leftover app data
 - Also shows storage, CPU, memory, battery, running processes, and installed apps with their leftovers
 - Apple silicon, macOS 14 Sonoma or newer
+- Website: https://bunthondev.github.io/deep-clean/
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
@@ -178,6 +179,7 @@ Resources/Info.plist
 Resources/make-icon.sh    regenerates AppIcon.icns (AppKit + sips + iconutil, no Xcode)
 build.sh               swift build + wrap into DeepClean.app
 release.sh             build.sh + zip into dist/
+site/                  landing page (Vite + React), deployed to GitHub Pages by .github/workflows/pages.yml
 ```
 
 ### Debugging without screen recording
