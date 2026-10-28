@@ -7,6 +7,7 @@ enum Filter: Hashable {
     case apps
     case processes
     case battery
+    case duplicates
     case tier(Tier)
     case group(String)
 }
@@ -43,6 +44,18 @@ final class ScanViewModel: ObservableObject {
     @Published var selectedProcessGroupID: ProcessGroup.ID?
     @Published var pendingForceQuit: ProcessGroup?
     private let processSampler = ProcessSampler()
+
+    // Duplicates tool
+    @Published var duplicateSets: [DuplicateSet] = []
+    @Published var isFindingDuplicates = false
+    @Published var hasFoundDuplicates = false
+    @Published var duplicateStatus = "Find files and folders that exist more than once."
+    @Published var selectedDuplicateID: DuplicateSet.ID?
+    @Published var duplicateSort: DuplicateSort = .wasted
+    @Published var duplicateRoots: [URL] = ScanViewModel.loadDuplicateRoots() {
+        didSet { UserDefaults.standard.set(duplicateRoots.map(\.path), forKey: "duplicateRoots") }
+    }
+    private var duplicateTask: Task<Void, Never>?
 
     // Battery tool
     @Published var energyGroups: [EnergyGroup] = []
@@ -117,7 +130,7 @@ final class ScanViewModel: ObservableObject {
         var list = items
         switch filter {
         case .all: break
-        case .apps, .processes, .battery: return []
+        case .apps, .processes, .battery, .duplicates: return []
         case .tier(let t): list = list.filter { $0.tier == t }
         case .group(let g): list = list.filter { $0.group == g }
         }
@@ -252,6 +265,11 @@ final class ScanViewModel: ObservableObject {
                     self.items.removeAll { $0.paths.isEmpty }
                     self.pathSelection.subtract(trashedPaths)
                 }
+                // Trashed copies leave their duplicate set; a set down to one copy is resolved.
+                for i in self.duplicateSets.indices {
+                    self.duplicateSets[i].paths.removeAll { removed.contains("dup:" + $0) }
+                }
+                self.duplicateSets.removeAll { $0.paths.count < 2 }
                 self.selection.subtract(removed)
                 for id in removed { self.children[id] = nil }
                 if failures.isEmpty {
@@ -405,6 +423,18 @@ enum FinderTrash {
 
 enum ProcessSort: String, CaseIterable { case memory, cpu }
 
+enum DuplicateSort: String, CaseIterable, Identifiable {
+    case wasted, size, name
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .wasted: return "Can be freed"
+        case .size: return "Size"
+        case .name: return "Name"
+        }
+    }
+}
+
 // MARK: - Processes tool
 
 extension ScanViewModel {
@@ -540,6 +570,89 @@ extension ScanViewModel {
             let readings = await Task.detached { BatteryHistory.load() }.value
             batteryReadings = readings
             isLoadingBatteryHistory = false
+        }
+    }
+}
+
+// MARK: - Duplicates tool
+
+extension ScanViewModel {
+    nonisolated static func loadDuplicateRoots() -> [URL] {
+        if let saved = UserDefaults.standard.stringArray(forKey: "duplicateRoots") {
+            let urls = Scanner.normalizeRoots(saved.map { URL(fileURLWithPath: $0) })
+            if !urls.isEmpty { return urls }
+        }
+        return DuplicateFinder.defaultRoots
+    }
+
+    var selectedDuplicate: DuplicateSet? { duplicateSets.first { $0.id == selectedDuplicateID } }
+
+    var sortedDuplicateSets: [DuplicateSet] {
+        switch duplicateSort {
+        case .wasted: return duplicateSets.sorted { $0.wasted > $1.wasted }
+        case .size: return duplicateSets.sorted { $0.bytes == $1.bytes ? $0.wasted > $1.wasted : $0.bytes > $1.bytes }
+        case .name: return duplicateSets.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        }
+    }
+    var duplicatesWasted: Int64 { duplicateSets.reduce(0) { $0 + $1.wasted } }
+
+    var duplicateSelection: Binding<DuplicateSet.ID?> {
+        Binding(get: { self.selectedDuplicateID }, set: { v in DispatchQueue.main.async { self.selectedDuplicateID = v } })
+    }
+
+    func findDuplicates() {
+        guard !isFindingDuplicates else { return }
+        duplicateSets = []
+        selectedDuplicateID = nil
+        isFindingDuplicates = true
+        let finder = DuplicateFinder(roots: duplicateRoots)
+        duplicateTask = Task {
+            for await event in finder.run() {
+                switch event {
+                case .status(let s): duplicateStatus = s
+                case .done(let sets): duplicateSets = sets
+                }
+            }
+            if isFindingDuplicates {
+                duplicateStatus = "\(duplicateSets.count) duplicate sets, \(Format.size(duplicatesWasted)) can be freed"
+            }
+            isFindingDuplicates = false
+            hasFoundDuplicates = true
+        }
+    }
+
+    func cancelDuplicates() {
+        duplicateTask?.cancel()
+        duplicateTask = nil
+        isFindingDuplicates = false
+        duplicateStatus = "Search stopped"
+    }
+
+    var searchesEntireDisk: Bool { duplicateRoots == [DuplicateFinder.entireDisk] }
+
+    func searchEntireDisk() { duplicateRoots = [DuplicateFinder.entireDisk] }
+
+    /// `replacing`: the chosen folders become the whole search (switching away from Entire disk).
+    func chooseDuplicateRoots(replacing: Bool) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = Scanner.home
+        panel.message = "Choose folders to search for duplicates"
+        if panel.runModal() == .OK {
+            duplicateRoots = Scanner.normalizeRoots((replacing || searchesEntireDisk ? [] : duplicateRoots) + panel.urls)
+        }
+    }
+
+    /// Asks to move the chosen copies to Trash through the usual confirmation.
+    func askToTrashDuplicates(_ set: DuplicateSet, paths: [String]) {
+        guard !paths.isEmpty, paths.count < set.paths.count else { return }
+        pendingTrash = paths.map { p in
+            CleanItem(id: "dup:" + p, name: (p as NSString).lastPathComponent, paths: [p], tier: .review, group: "Duplicates",
+                      what: "A copy of \(set.isFolder ? "a folder" : "a file") that exists \(set.paths.count) times.",
+                      afterDelete: "The other \(set.paths.count - paths.count == 1 ? "copy stays" : "copies stay") where \(set.paths.count - paths.count == 1 ? "it is" : "they are").",
+                      bytes: set.bytes, fileCount: set.fileCount, modified: set.modified[p])
         }
     }
 }

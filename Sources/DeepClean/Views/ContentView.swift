@@ -54,6 +54,21 @@ struct ContentView: View {
                     try? await Task.sleep(for: .seconds(1))
                 }
                 if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p); exit(0) }
+            case "dups":
+                vm.filter = .duplicates
+                if let roots = ProcessInfo.processInfo.environment["DEEPCLEAN_ROOTS"] {
+                    vm.duplicateRoots = roots.split(separator: ":").map { URL(fileURLWithPath: String($0)) }
+                }
+                if let sort = ProcessInfo.processInfo.environment["DEEPCLEAN_SORT"].flatMap(DuplicateSort.init(rawValue:)) { vm.duplicateSort = sort }
+                if ProcessInfo.processInfo.environment["DEEPCLEAN_SELECT"] != nil {
+                    vm.findDuplicates()
+                    while vm.isFindingDuplicates { try? await Task.sleep(for: .seconds(1)) }
+                    vm.selectedDuplicateID = vm.duplicateSets.first?.id
+                }
+                try? await Task.sleep(for: .seconds(2))
+                // Test folders must not become the user's saved search.
+                UserDefaults.standard.removeObject(forKey: "duplicateRoots")
+                if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p); exit(0) }
             case "procs-noselect":
                 vm.filter = .processes
             case "apps":
@@ -117,7 +132,7 @@ struct ContentView: View {
                     ForEach(Grouping.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .disabled(vm.filter == .apps || vm.filter == .processes || vm.filter == .battery)
+                .disabled(vm.filter == .apps || vm.filter == .processes || vm.filter == .battery || vm.filter == .duplicates)
                 .help("Group the list by safety tier or by kind (node_modules, target, caches…)")
 
                 Menu {
@@ -147,14 +162,15 @@ struct ContentView: View {
                 .disabled(vm.trashableSelection.isEmpty)
                 .help("Move the selected items to the Trash after confirmation")
 
-                if vm.isScanning {
-                    Button { vm.cancel() } label: { Label("Stop", systemImage: "stop.fill") }
+                if vm.isScanning || (vm.filter == .duplicates && vm.isFindingDuplicates) {
+                    Button { vm.filter == .duplicates ? vm.cancelDuplicates() : vm.cancel() } label: { Label("Stop", systemImage: "stop.fill") }
                 } else {
                     Button {
                         switch vm.filter {
                         case .apps: vm.scanApps()
                         case .processes: vm.sampleProcessesNow()
                         case .battery: vm.loadBatteryHistory()
+                        case .duplicates: vm.findDuplicates()
                         default: vm.scan()
                         }
                     } label: {
@@ -199,6 +215,7 @@ struct ContentColumn: View {
             case .apps: AppListView(vm: vm)
             case .processes: ProcessListView(vm: vm)
             case .battery: EnergyListView(vm: vm)
+            case .duplicates: DuplicateListView(vm: vm)
             default: ItemList(vm: vm)
             }
         }
@@ -217,6 +234,13 @@ struct DetailColumn: View {
                 } else {
                     ContentUnavailableView("Select a process", systemImage: "cpu",
                                            description: Text("See every process behind an app, how much memory and CPU each uses, and quit or force quit it."))
+                }
+            case .duplicates:
+                if let d = vm.selectedDuplicate {
+                    DuplicateDetailView(dup: d, vm: vm)
+                } else {
+                    ContentUnavailableView("Select a duplicate", systemImage: "doc.on.doc",
+                                           description: Text("See every copy, pick the ones to keep, and move the rest to the Trash."))
                 }
             case .battery:
                 if let g = vm.selectedEnergyGroup {
@@ -250,8 +274,9 @@ struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if vm.isScanning || vm.isScanningApps { ProgressView().controlSize(.small) }
+            if vm.isScanning || vm.isScanningApps || vm.isFindingDuplicates { ProgressView().controlSize(.small) }
             Text(vm.filter == .processes ? "\(vm.processCount) processes in \(vm.processGroups.count) groups, refreshing every 3 s"
+                 : vm.filter == .duplicates ? vm.duplicateStatus
                  : vm.filter == .battery ? "\(vm.energyGroups.count) apps using energy, refreshing every 3 s"
                  : vm.filter == .apps ? (vm.isScanningApps ? "Listing applications…" : "\(vm.apps.count) applications") : vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
@@ -297,6 +322,9 @@ struct Sidebar: View {
                 Label("Applications", systemImage: "app.badge.checkmark")
                     .badge(vm.apps.isEmpty ? "" : Format.size(vm.appsTotalBytes))
                     .tag(Filter.apps)
+                Label("Duplicates", systemImage: "doc.on.doc")
+                    .badge(vm.duplicateSets.isEmpty ? "" : Format.size(vm.duplicatesWasted))
+                    .tag(Filter.duplicates)
                 Label("Processes", systemImage: "cpu")
                     .badge(vm.processGroups.isEmpty ? "" : "\(vm.processCount)")
                     .tag(Filter.processes)

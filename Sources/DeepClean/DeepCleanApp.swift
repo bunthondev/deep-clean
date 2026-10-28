@@ -26,6 +26,10 @@ struct DeepCleanApp: App {
             CLI.runSystem()
             exit(0)
         }
+        if let i = CommandLine.arguments.firstIndex(of: "--dups") {
+            CLI.runDups(CommandLine.arguments.dropFirst(i + 1).map { URL(fileURLWithPath: $0) })
+            exit(0)
+        }
         if CommandLine.arguments.contains("--procs") {
             CLI.runProcs()
             exit(0)
@@ -91,6 +95,18 @@ enum CLI {
         }
         sem.wait()
         if newer { exit(1) }
+    }
+
+    /// `--dups [folder…]`: prints duplicate sets, biggest saving first. Defaults to the personal folders.
+    static func runDups(_ folders: [URL]) {
+        let start = Date()
+        let sets = DuplicateFinder(roots: folders.isEmpty ? DuplicateFinder.defaultRoots : folders)
+            .find { FileHandle.standardError.write(Data(("… " + $0 + "\n").utf8)) }
+        for d in sets.prefix(25) {
+            print(String(format: "%10@ wasted  %@ %@, %d copies of %@", Format.size(d.wasted), d.isFolder ? "folder" : "file", d.name, d.paths.count, Format.size(d.bytes)))
+            for p in d.paths { print("            " + p.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
+        }
+        print("\n\(sets.count) sets, \(Format.size(sets.reduce(0) { $0 + $1.wasted })) can be freed, \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
     }
 
     static func runProcs() {
