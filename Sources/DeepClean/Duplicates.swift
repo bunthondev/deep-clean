@@ -46,6 +46,9 @@ struct DuplicateFinder: Sendable {
             && ((path as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent == "/Users"
     }
 
+    /// Finder bookkeeping that differs between copies without meaning anything.
+    static let ignoredNames: Set<String> = [".DS_Store", "Icon\r", ".localized"]
+
     /// "Macintosh HD" for the entire disk, the folder name otherwise.
     static func displayName(_ root: URL) -> String {
         guard root.path == "/" else { return root.lastPathComponent }
@@ -76,7 +79,10 @@ struct DuplicateFinder: Sendable {
     /// `isCancelled` is checked from worker threads too, where `Task.isCancelled` is always false.
     func find(isCancelled: @escaping @Sendable () -> Bool = { false }, _ status: (String) -> Void) -> [DuplicateSet] {
         // 1. Walk, one folder level at a time with every folder of a level listed in parallel.
-        // Hidden files and package contents (apps, Photos libraries) are skipped.
+        // Hidden items, packages (apps, Keynote files, Photos libraries), symlinks and skipped folders
+        // are not compared, so a folder holding any of them is "opaque": it cannot be called a
+        // duplicate, since its copies may differ in exactly those items (a .git history, a .key file).
+        var opaque: Set<String> = []
         var files: [String: FileEntry] = [:]
         var children: [String: [String]] = [:]     // folder -> immediate child paths
         var folderModified: [String: Date] = [:]
@@ -91,27 +97,32 @@ struct DuplicateFinder: Sendable {
             var next: [URL] = []
             DispatchQueue.concurrentPerform(iterations: dirs.count) { i in
                 if isCancelled() { return }
-                let kids = (try? FileManager.default.contentsOfDirectory(at: dirs[i], includingPropertiesForKeys: keys,
-                                                                         options: [.skipsHiddenFiles])) ?? []
+                let listing = try? FileManager.default.contentsOfDirectory(at: dirs[i], includingPropertiesForKeys: keys, options: [])
+                var isOpaque = listing == nil
                 var found: [String: FileEntry] = [:], mods: [String: Date] = [:], subdirs: [URL] = [], listed: [String] = []
-                for url in kids {
-                    guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isSymbolicLink != true else { continue }
+                for url in listing ?? [] {
+                    let name = url.lastPathComponent
+                    if Self.ignoredNames.contains(name) { continue }
+                    guard !name.hasPrefix("."), let v = try? url.resourceValues(forKeys: Set(keys)), v.isSymbolicLink != true else {
+                        isOpaque = true; continue
+                    }
                     let path = url.path
                     if v.isDirectory == true {
-                        if v.isPackage == true || Self.skippedFolders.contains(url.lastPathComponent)
-                            || Self.skippedPaths.contains(path) || Self.isAppData(path) { continue }
+                        if v.isPackage == true || Self.skippedFolders.contains(name)
+                            || Self.skippedPaths.contains(path) || Self.isAppData(path) { isOpaque = true; continue }
                         subdirs.append(url)
                         mods[path] = v.contentModificationDate
                     } else if v.isRegularFile == true {
                         // The file identifier is the inode: hard links share it.
                         found[path] = FileEntry(size: Int64(v.fileSize ?? 0), modified: v.contentModificationDate, inode: v.fileIdentifier ?? 0)
-                    } else { continue }
+                    } else { isOpaque = true; continue }
                     listed.append(path)
                 }
                 lock.withLock {
                     files.merge(found) { a, _ in a }
                     folderModified.merge(mods) { a, _ in a }
                     children[dirs[i].path] = listed
+                    if isOpaque { opaque.insert(dirs[i].path) }
                     next.append(contentsOf: subdirs)
                 }
             }
@@ -134,6 +145,7 @@ struct DuplicateFinder: Sendable {
                     lines.append("f\t\(name)\t\(f.size)"); size += f.size; count += 1
                 } else if children[c] != nil {
                     lines.append("d\t\(name)\t\(structure(c))"); size += folderSize[c] ?? 0; count += folderFiles[c] ?? 0
+                    if opaque.contains(c) { opaque.insert(dir) }
                 }
             }
             let sig = Self.sha(lines.sorted().joined(separator: "\n"))
@@ -144,7 +156,7 @@ struct DuplicateFinder: Sendable {
         var byStructure: [String: [String]] = [:]
         for dir in children.keys {
             let sig = structure(dir)
-            guard !rootPaths.contains(dir), (folderSize[dir] ?? 0) >= minFolderBytes else { continue }
+            guard !rootPaths.contains(dir), !opaque.contains(dir), (folderSize[dir] ?? 0) >= minFolderBytes else { continue }
             byStructure[sig, default: []].append(dir)
         }
 
@@ -243,6 +255,36 @@ struct DuplicateFinder: Sendable {
             }
         }
         return sets.sorted { $0.wasted > $1.wasted }
+    }
+
+    /// Content fingerprint of a file or a whole folder, computed fresh from disk, by the same rules
+    /// as the search. nil when it cannot be compared (unreadable, only in iCloud, or holding items
+    /// the search does not compare). Used to re-check copies right before they are trashed.
+    static func fingerprint(_ path: String) -> String? {
+        let hashes = HashCache(isCancelled: { false })
+        func walk(_ url: URL) -> String? {
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
+            guard isDir.boolValue else { return hashes.full(url.path) }
+            let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .isPackageKey]
+            guard let kids = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: keys, options: []) else { return nil }
+            var lines: [String] = []
+            for k in kids {
+                let name = k.lastPathComponent
+                if ignoredNames.contains(name) { continue }
+                guard !name.hasPrefix("."), let v = try? k.resourceValues(forKeys: Set(keys)), v.isSymbolicLink != true,
+                      v.isPackage != true, !skippedFolders.contains(name) else { return nil }
+                if v.isDirectory == true {
+                    guard let h = walk(k) else { return nil }
+                    lines.append("d\t\(name)\t\(h)")
+                } else if v.isRegularFile == true {
+                    guard let h = hashes.full(k.path) else { return nil }
+                    lines.append("f\t\(name)\t\(h)")
+                } else { return nil }
+            }
+            return sha(lines.sorted().joined(separator: "\n"))
+        }
+        return walk(URL(fileURLWithPath: path))
     }
 
     static func sha(_ s: String) -> String {

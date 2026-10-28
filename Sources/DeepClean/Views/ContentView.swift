@@ -64,6 +64,13 @@ struct ContentView: View {
                     vm.findDuplicates()
                     while vm.isFindingDuplicates { try? await Task.sleep(for: .seconds(1)) }
                     vm.selectedDuplicateID = vm.duplicateSets.first?.id
+                    // DEEPCLEAN_ASKTRASH: press the trash button for the first set after a pause, to see the re-check.
+                    if let d = vm.duplicateSets.first, ProcessInfo.processInfo.environment["DEEPCLEAN_ASKTRASH"] != nil {
+                        try? await Task.sleep(for: .seconds(5))
+                        vm.askToTrashDuplicates(d, paths: Array(d.paths.dropFirst()))
+                        try? await Task.sleep(for: .seconds(3))
+                        print("asktrash: confirm=\(vm.pendingTrash?.count ?? 0) error=\(vm.errorMessage != nil)")
+                    }
                 }
                 try? await Task.sleep(for: .seconds(2))
                 // Test folders must not become the user's saved search.

@@ -645,9 +645,32 @@ extension ScanViewModel {
         }
     }
 
-    /// Asks to move the chosen copies to Trash through the usual confirmation.
+    /// Asks to move the chosen copies to Trash through the usual confirmation. First re-reads every
+    /// copy from disk: files may have changed since the search, and trashing a "copy" of a kept file
+    /// that was edited or deleted meanwhile would lose data.
     func askToTrashDuplicates(_ set: DuplicateSet, paths: [String]) {
         guard !paths.isEmpty, paths.count < set.paths.count else { return }
+        let kept = set.paths.filter { !paths.contains($0) }
+        status = "Checking that the copies are still identical…"
+        Task {
+            let changed: [String] = await Task.detached(priority: .userInitiated) {
+                let keptPrints = Set(kept.compactMap { DuplicateFinder.fingerprint($0) })
+                // A kept copy must still exist, and every copy to trash must match one of them.
+                guard !keptPrints.isEmpty else { return kept }
+                return paths.filter { p in DuplicateFinder.fingerprint(p).map { !keptPrints.contains($0) } ?? true }
+            }.value
+            guard changed.isEmpty else {
+                status = "Nothing moved: files changed since the search"
+                errorMessage = "These changed since the search, so they are no longer known to be copies. Search again before trashing.\n\n"
+                    + changed.prefix(5).map { $0.replacingOccurrences(of: NSHomeDirectory(), with: "~") }.joined(separator: "\n")
+                return
+            }
+            status = duplicateStatus
+            confirmTrashDuplicates(set, paths: paths)
+        }
+    }
+
+    private func confirmTrashDuplicates(_ set: DuplicateSet, paths: [String]) {
         pendingTrash = paths.map { p in
             CleanItem(id: "dup:" + p, name: (p as NSString).lastPathComponent, paths: [p], tier: .review, group: "Duplicates",
                       what: "A copy of \(set.isFolder ? "a folder" : "a file") that exists \(set.paths.count) times.",
