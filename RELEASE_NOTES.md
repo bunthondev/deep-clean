@@ -1,4 +1,4 @@
-**New: Battery.** A Battery section under Tools shows which apps use the most energy (the same Energy Impact figure as Activity Monitor, live and averaged since you opened the view, with each app's processes), plus about a week of battery history: a charge chart with time on power shaded, and a table of each stretch on battery or on power with its drain rate.
+**New: Duplicates.** A Duplicates section under Tools finds files and folders of 1 MB or more that exist more than once, by content, not name. It searches the entire disk by default (skipping macOS system folders, other disks and app data in Library folders), or only folders you choose. A copied folder shows up once instead of as hundreds of files. Sort by space freed, size or name; each set lists its copies oldest first with all but one ticked, and moves the extras to the Trash after confirmation.
 
 **Install:** `brew install --cask bunthondev/tap/deepclean`, or unzip, drag `DeepClean.app` to `/Applications`,
 then run `xattr -d com.apple.quarantine /Applications/DeepClean.app` once (the build is not notarized).
