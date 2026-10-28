@@ -22,7 +22,10 @@ struct ContentView: View {
             DetailColumn(vm: vm)
         }
         .navigationSplitViewColumnWidth(min: 380, ideal: 480)
-        .onChange(of: vm.filter, initial: true) { _, f in vm.setProcessSampling(active: f == .processes) }
+        .onChange(of: vm.filter, initial: true) { _, f in
+            vm.setProcessSampling(active: f == .processes)
+            vm.setEnergySampling(active: f == .battery)
+        }
         .task {
             // Debug aid: DEEPCLEAN_DEBUG=procs opens the Processes view and selects the biggest group.
             guard let mode = ProcessInfo.processInfo.environment["DEEPCLEAN_DEBUG"] else { return }
@@ -43,6 +46,14 @@ struct ContentView: View {
                 }
                 try? await Task.sleep(for: .seconds(2))
                 if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p) }
+            case "battery":
+                vm.filter = .battery
+                try? await Task.sleep(for: .seconds(8))
+                if let sel = ProcessInfo.processInfo.environment["DEEPCLEAN_SELECT"] {
+                    vm.selectedEnergyGroupID = sel == "top" ? vm.sortedEnergyGroups.first?.id : sel
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p); exit(0) }
             case "procs-noselect":
                 vm.filter = .processes
             case "apps":
@@ -106,7 +117,7 @@ struct ContentView: View {
                     ForEach(Grouping.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .disabled(vm.filter == .apps || vm.filter == .processes)
+                .disabled(vm.filter == .apps || vm.filter == .processes || vm.filter == .battery)
                 .help("Group the list by safety tier or by kind (node_modules, target, caches…)")
 
                 Menu {
@@ -143,9 +154,13 @@ struct ContentView: View {
                         switch vm.filter {
                         case .apps: vm.scanApps()
                         case .processes: vm.sampleProcessesNow()
+                        case .battery: vm.loadBatteryHistory()
                         default: vm.scan()
                         }
-                    } label: { Label(vm.filter == .processes ? "Refresh" : "Scan", systemImage: vm.filter == .processes ? "arrow.clockwise" : "magnifyingglass") }
+                    } label: {
+                        let refresh = vm.filter == .processes || vm.filter == .battery
+                        Label(refresh ? "Refresh" : "Scan", systemImage: refresh ? "arrow.clockwise" : "magnifyingglass")
+                    }
                         .keyboardShortcut("r", modifiers: .command)
                 }
             }
@@ -183,6 +198,7 @@ struct ContentColumn: View {
             switch vm.filter {
             case .apps: AppListView(vm: vm)
             case .processes: ProcessListView(vm: vm)
+            case .battery: EnergyListView(vm: vm)
             default: ItemList(vm: vm)
             }
         }
@@ -201,6 +217,12 @@ struct DetailColumn: View {
                 } else {
                     ContentUnavailableView("Select a process", systemImage: "cpu",
                                            description: Text("See every process behind an app, how much memory and CPU each uses, and quit or force quit it."))
+                }
+            case .battery:
+                if let g = vm.selectedEnergyGroup {
+                    EnergyDetailView(group: g, vm: vm)
+                } else {
+                    BatteryHistoryView(vm: vm)
                 }
             case .apps:
                 if let app = vm.selectedApp {
@@ -230,6 +252,7 @@ struct StatusBar: View {
         HStack(spacing: 8) {
             if vm.isScanning || vm.isScanningApps { ProgressView().controlSize(.small) }
             Text(vm.filter == .processes ? "\(vm.processCount) processes in \(vm.processGroups.count) groups, refreshing every 3 s"
+                 : vm.filter == .battery ? "\(vm.energyGroups.count) apps using energy, refreshing every 3 s"
                  : vm.filter == .apps ? (vm.isScanningApps ? "Listing applications…" : "\(vm.apps.count) applications") : vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             if vm.selection.count > 1 {
@@ -277,6 +300,9 @@ struct Sidebar: View {
                 Label("Processes", systemImage: "cpu")
                     .badge(vm.processGroups.isEmpty ? "" : "\(vm.processCount)")
                     .tag(Filter.processes)
+                Label("Battery", systemImage: "battery.75percent")
+                    .badge(vm.system.hasBattery ? "\(vm.system.batteryPercent)%" : "")
+                    .tag(Filter.battery)
             }
             if !vm.groups.isEmpty {
                 Section("By kind") {

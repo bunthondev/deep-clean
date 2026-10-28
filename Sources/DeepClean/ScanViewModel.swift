@@ -6,6 +6,7 @@ enum Filter: Hashable {
     case all
     case apps
     case processes
+    case battery
     case tier(Tier)
     case group(String)
 }
@@ -42,6 +43,17 @@ final class ScanViewModel: ObservableObject {
     @Published var selectedProcessGroupID: ProcessGroup.ID?
     @Published var pendingForceQuit: ProcessGroup?
     private let processSampler = ProcessSampler()
+
+    // Battery tool
+    @Published var energyGroups: [EnergyGroup] = []
+    /// Sum of each group's energy impact over all samples since the Battery view opened, for the average.
+    @Published var energyTotals: [EnergyGroup.ID: Double] = [:]
+    @Published var energySamples = 0
+    @Published var selectedEnergyGroupID: EnergyGroup.ID? = EnergyGroup.historyID
+    @Published var batteryReadings: [BatteryReading] = []
+    @Published var isLoadingBatteryHistory = false
+    private var energyTimer: Task<Void, Never>?
+    private var lastEnergyBundles: [EnergyGroup.ID: String] = [:]
     private var processTimer: Task<Void, Never>?
     private let sampler = SystemSampler()
     private var systemTimer: Task<Void, Never>?
@@ -105,7 +117,7 @@ final class ScanViewModel: ObservableObject {
         var list = items
         switch filter {
         case .all: break
-        case .apps, .processes: return []
+        case .apps, .processes, .battery: return []
         case .tier(let t): list = list.filter { $0.tier == t }
         case .group(let g): list = list.filter { $0.group == g }
         }
@@ -463,5 +475,71 @@ extension ScanViewModel {
     }
     var itemSelection: Binding<Set<CleanItem.ID>> {
         Binding(get: { self.selection }, set: { v in DispatchQueue.main.async { self.selection = v } })
+    }
+}
+
+// MARK: - Battery tool
+
+extension ScanViewModel {
+    /// Average energy impact since the Battery view opened. Groups missing from a sample count as 0 for it.
+    func averageEnergy(of id: EnergyGroup.ID) -> Double {
+        energySamples > 0 ? (energyTotals[id] ?? 0) / Double(energySamples) : 0
+    }
+
+    /// Groups seen in any sample since the view opened, highest average first. Quit apps stay listed
+    /// with their current impact at 0 so a short burst is not lost.
+    var sortedEnergyGroups: [EnergyGroup] {
+        var list = energyGroups
+        let live = Set(list.map(\.id))
+        for id in energyTotals.keys where !live.contains(id) {
+            list.append(EnergyGroup(id: id, name: id, bundlePath: lastEnergyBundles[id], rows: []))
+        }
+        return list.sorted { averageEnergy(of: $0.id) == averageEnergy(of: $1.id) ? $0.power > $1.power : averageEnergy(of: $0.id) > averageEnergy(of: $1.id) }
+    }
+
+    var selectedEnergyGroup: EnergyGroup? { sortedEnergyGroups.first { $0.id == selectedEnergyGroupID } }
+
+    var energySelection: Binding<EnergyGroup.ID?> {
+        Binding(get: { self.selectedEnergyGroupID }, set: { v in DispatchQueue.main.async { self.selectedEnergyGroupID = v } })
+    }
+
+    /// Sampling runs only while the Battery view is showing. Each sample takes about 2 s, then a 1 s pause.
+    func setEnergySampling(active: Bool) {
+        if active {
+            if batteryReadings.isEmpty { loadBatteryHistory() }
+            guard energyTimer == nil else { return }
+            energyTotals = [:]
+            energySamples = 0
+            energyTimer = Task { [weak self] in
+                while !Task.isCancelled {
+                    let groups = await Task.detached { EnergySampler.sample() }.value
+                    guard let self, !Task.isCancelled else { return }
+                    self.addEnergySample(groups)
+                    try? await Task.sleep(for: .seconds(1))
+                }
+            }
+        } else {
+            energyTimer?.cancel()
+            energyTimer = nil
+        }
+    }
+
+    private func addEnergySample(_ groups: [EnergyGroup]) {
+        for g in groups {
+            energyTotals[g.id, default: 0] += g.power
+            if let b = g.bundlePath { lastEnergyBundles[g.id] = b }
+        }
+        energySamples += 1
+        energyGroups = groups
+    }
+
+    func loadBatteryHistory() {
+        guard !isLoadingBatteryHistory else { return }
+        isLoadingBatteryHistory = true
+        Task {
+            let readings = await Task.detached { BatteryHistory.load() }.value
+            batteryReadings = readings
+            isLoadingBatteryHistory = false
+        }
     }
 }
