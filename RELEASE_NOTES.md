@@ -1,4 +1,4 @@
-**New: Duplicates.** A Duplicates section under Tools finds files and folders of 1 MB or more that exist more than once, by content, not name. It searches the entire disk by default (skipping macOS system folders, other disks and app data in Library folders), or only folders you choose. A copied folder shows up once instead of as hundreds of files. Sort by space freed, size or name; each set lists its copies oldest first with all but one ticked, and moves the extras to the Trash after confirmation.
+**Safer duplicate removal.** Before moving duplicates to the Trash, DeepClean now re-reads every copy from disk and refuses if the kept copy was changed or deleted since the search. Folders that hold items the search does not compare (hidden files such as a `.git` history, packages such as Keynote documents or apps, symlinks) are no longer reported as identical folders; duplicate files inside them are still found.
 
 **Install:** `brew install --cask bunthondev/tap/deepclean`, or unzip, drag `DeepClean.app` to `/Applications`,
 then run `xattr -d com.apple.quarantine /Applications/DeepClean.app` once (the build is not notarized).
