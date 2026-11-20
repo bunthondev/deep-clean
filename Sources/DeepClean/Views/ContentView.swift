@@ -76,6 +76,23 @@ struct ContentView: View {
                 // Test folders must not become the user's saved search.
                 UserDefaults.standard.removeObject(forKey: "duplicateRoots")
                 if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p); exit(0) }
+            case "unused":
+                // DEEPCLEAN_DEBUG=unused [DEEPCLEAN_SELECT=1|<kind index>] DEEPCLEAN_SNAPSHOT=out.png
+                if let w = DebugHooks.window { w.setContentSize(NSSize(width: 1540, height: 900)); w.center() }
+                vm.filter = .unused
+                vm.scanUnused()
+                while vm.isScanningUnused { try? await Task.sleep(for: .seconds(1)) }
+                if let sel = ProcessInfo.processInfo.environment["DEEPCLEAN_SELECT"] {
+                    let kind = Int(sel).flatMap(UnusedKind.init(rawValue:))
+                    vm.selectedUnusedID = vm.visibleUnused.first { kind == nil || $0.kind == kind }?.id
+                }
+                try? await Task.sleep(for: .seconds(2))
+                print("unused: \(vm.unusedSummary)")
+                for k in UnusedKind.allCases {
+                    let r = vm.visibleUnused.filter { $0.kind == k }
+                    print("unused \(k.title): \(r.count) of \(vm.unusedItems.filter { $0.kind == k }.count), \(Format.size(r.reduce(0) { $0 + $1.bytes }))")
+                }
+                if let w = DebugHooks.window, let p = ProcessInfo.processInfo.environment["DEEPCLEAN_SNAPSHOT"] { DebugHooks.snapshot(w, to: p); exit(0) }
             case "procs-noselect":
                 vm.filter = .processes
             case "apps":
@@ -139,7 +156,7 @@ struct ContentView: View {
                     ForEach(Grouping.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .disabled(vm.filter == .apps || vm.filter == .processes || vm.filter == .battery || vm.filter == .duplicates)
+                .disabled(vm.filter == .apps || vm.filter == .processes || vm.filter == .battery || vm.filter == .duplicates || vm.filter == .unused)
                 .help("Group the list by safety tier or by kind (node_modules, target, caches…)")
 
                 Menu {
@@ -169,8 +186,14 @@ struct ContentView: View {
                 .disabled(vm.trashableSelection.isEmpty)
                 .help("Move the selected items to the Trash after confirmation")
 
-                if vm.isScanning || (vm.filter == .duplicates && vm.isFindingDuplicates) {
-                    Button { vm.filter == .duplicates ? vm.cancelDuplicates() : vm.cancel() } label: { Label("Stop", systemImage: "stop.fill") }
+                if vm.filter == .unused ? vm.isScanningUnused : (vm.isScanning || (vm.filter == .duplicates && vm.isFindingDuplicates)) {
+                    Button {
+                        switch vm.filter {
+                        case .unused: vm.cancelUnused()
+                        case .duplicates: vm.cancelDuplicates()
+                        default: vm.cancel()
+                        }
+                    } label: { Label("Stop", systemImage: "stop.fill") }
                 } else {
                     Button {
                         switch vm.filter {
@@ -178,6 +201,7 @@ struct ContentView: View {
                         case .processes: vm.sampleProcessesNow()
                         case .battery: vm.loadBatteryHistory()
                         case .duplicates: vm.findDuplicates()
+                        case .unused: vm.scanUnused()
                         default: vm.scan()
                         }
                     } label: {
@@ -223,6 +247,7 @@ struct ContentColumn: View {
             case .processes: ProcessListView(vm: vm)
             case .battery: EnergyListView(vm: vm)
             case .duplicates: DuplicateListView(vm: vm)
+            case .unused: UnusedListView(vm: vm)
             default: ItemList(vm: vm)
             }
         }
@@ -248,6 +273,13 @@ struct DetailColumn: View {
                 } else {
                     ContentUnavailableView("Select a duplicate", systemImage: "doc.on.doc",
                                            description: Text("See every copy, pick the ones to keep, and move the rest to the Trash."))
+                }
+            case .unused:
+                if let u = vm.selectedUnused {
+                    UnusedDetailView(item: u, vm: vm)
+                } else {
+                    ContentUnavailableView("Select an item", systemImage: "clock.arrow.circlepath",
+                                           description: Text("See its size, when it was last used and how that was measured, and reveal or trash it."))
                 }
             case .battery:
                 if let g = vm.selectedEnergyGroup {
@@ -281,9 +313,10 @@ struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if vm.isScanning || vm.isScanningApps || vm.isFindingDuplicates { ProgressView().controlSize(.small) }
+            if vm.isScanning || vm.isScanningApps || vm.isFindingDuplicates || vm.isScanningUnused { ProgressView().controlSize(.small) }
             Text(vm.filter == .processes ? "\(vm.processCount) processes in \(vm.processGroups.count) groups, refreshing every 3 s"
                  : vm.filter == .duplicates ? vm.duplicateStatus
+                 : vm.filter == .unused ? (vm.hasScannedUnused && !vm.isScanningUnused ? vm.unusedSummary : vm.unusedStatus)
                  : vm.filter == .battery ? "\(vm.energyGroups.count) apps using energy, refreshing every 3 s"
                  : vm.filter == .apps ? (vm.isScanningApps ? "Listing applications…" : "\(vm.apps.count) applications") : vm.status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
@@ -291,7 +324,7 @@ struct StatusBar: View {
                 Text("\(vm.selection.count) selected, \(Format.size(vm.selectedItems.reduce(0) { $0 + $1.bytes }))")
                     .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
             }
-            if vm.hasScanned || vm.isScanning {
+            if (vm.hasScanned || vm.isScanning) && vm.filter != .unused {
                 Text("Total \(Format.size(vm.totalBytes))").font(.callout.monospacedDigit()).fontWeight(.medium)
             }
         }
@@ -316,6 +349,9 @@ struct Sidebar: View {
             Section("Junk") {
                 Label("Everything", systemImage: "internaldrive").tag(Filter.all)
                     .badge(vm.items.isEmpty ? "" : Format.size(vm.totalBytes))
+                Label("System Data", systemImage: "gearshape.2")
+                    .badge(vm.items.isEmpty ? "" : Format.size(vm.systemDataBytes))
+                    .tag(Filter.systemData)
             }
             Section("By safety") {
                 ForEach(Tier.allCases) { tier in
@@ -332,6 +368,9 @@ struct Sidebar: View {
                 Label("Duplicates", systemImage: "doc.on.doc")
                     .badge(vm.duplicateSets.isEmpty ? "" : Format.size(vm.duplicatesWasted))
                     .tag(Filter.duplicates)
+                Label("Unused", systemImage: "clock.arrow.circlepath")
+                    .badge(vm.unusedItems.isEmpty ? "" : Format.size(vm.unusedBytes))
+                    .tag(Filter.unused)
                 Label("Processes", systemImage: "cpu")
                     .badge(vm.processGroups.isEmpty ? "" : "\(vm.processCount)")
                     .tag(Filter.processes)

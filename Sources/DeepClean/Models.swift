@@ -57,6 +57,16 @@ struct CleanItem: Identifiable, Hashable, Sendable {
     var path: String { paths.first ?? "" }
     var isAggregate: Bool { paths.count > 1 }
 
+    /// True when macOS counts every path of this item as "System Data" in Storage settings:
+    /// app data and caches in Library folders, hidden home folders, and system folders.
+    var isSystemData: Bool {
+        let home = NSHomeDirectory()
+        return !paths.isEmpty && paths.allSatisfy { p in
+            p.hasPrefix(home + "/Library/") || p.hasPrefix(home + "/.")
+                || ["/Library/", "/private/", "/opt/", "/usr/local/"].contains { p.hasPrefix($0) }
+        }
+    }
+
     var displayPath: String {
         let home = NSHomeDirectory()
         return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path

@@ -8,6 +8,8 @@ enum Filter: Hashable {
     case processes
     case battery
     case duplicates
+    case unused
+    case systemData
     case tier(Tier)
     case group(String)
 }
@@ -90,6 +92,15 @@ final class ScanViewModel: ObservableObject {
     @Published var appSearch = ""
     @Published var leftovers: [InstalledApp.ID: [Leftover]] = [:]
     private var appTask: Task<Void, Never>?
+
+    // Unused tool
+    @Published var unusedItems: [UnusedItem] = []
+    @Published var isScanningUnused = false
+    @Published var hasScannedUnused = false
+    @Published var unusedStatus = "Find projects, apps, databases and large files you have not used in a while."
+    @Published var unusedDays = 90
+    @Published var selectedUnusedID: UnusedItem.ID?
+    private var unusedTask: Task<Void, Never>?
     private var leftoverTasks: [InstalledApp.ID: Task<Void, Never>] = [:]
 
     private var task: Task<Void, Never>?
@@ -130,7 +141,8 @@ final class ScanViewModel: ObservableObject {
         var list = items
         switch filter {
         case .all: break
-        case .apps, .processes, .battery, .duplicates: return []
+        case .apps, .processes, .battery, .duplicates, .unused: return []
+        case .systemData: list = list.filter(\.isSystemData)
         case .tier(let t): list = list.filter { $0.tier == t }
         case .group(let g): list = list.filter { $0.group == g }
         }
@@ -143,6 +155,7 @@ final class ScanViewModel: ObservableObject {
 
     func bytes(for tier: Tier) -> Int64 { items.filter { $0.tier == tier }.reduce(0) { $0 + $1.bytes } }
     var totalBytes: Int64 { items.reduce(0) { $0 + $1.bytes } }
+    var systemDataBytes: Int64 { items.filter(\.isSystemData).reduce(0) { $0 + $1.bytes } }
 
     // MARK: Scanning
 
@@ -236,6 +249,7 @@ final class ScanViewModel: ObservableObject {
             await MainActor.run {
                 self.items.removeAll { removed.contains($0.id) }
                 self.apps.removeAll { removed.contains("app:" + $0.path) }
+                self.unusedItems.removeAll { removed.contains("unused:" + $0.path) }
                 for app in self.apps where self.leftovers[app.id] != nil {
                     self.leftovers[app.id]?.removeAll { removed.contains("leftover:" + $0.path) }
                 }
@@ -677,5 +691,65 @@ extension ScanViewModel {
                       afterDelete: "The other \(set.paths.count - paths.count == 1 ? "copy stays" : "copies stay") where \(set.paths.count - paths.count == 1 ? "it is" : "they are").",
                       bytes: set.bytes, fileCount: set.fileCount, modified: set.modified[p])
         }
+    }
+}
+
+// MARK: - Unused tool
+
+extension ScanViewModel {
+    /// Choices for "unused for at least", in days.
+    static let unusedDayChoices: [(days: Int, title: String)] = [(30, "1 month"), (90, "3 months"), (180, "6 months"), (365, "1 year"), (730, "2 years")]
+
+    var visibleUnused: [UnusedItem] {
+        let q = search.lowercased()
+        return unusedItems
+            .filter { $0.isUnused(days: unusedDays) }
+            .filter { q.isEmpty || $0.name.lowercased().contains(q) || $0.path.lowercased().contains(q) }
+            .sorted { $0.bytes > $1.bytes }
+    }
+    var unusedBytes: Int64 { unusedItems.filter { $0.isUnused(days: unusedDays) }.reduce(0) { $0 + $1.bytes } }
+    var selectedUnused: UnusedItem? { unusedItems.first { $0.id == selectedUnusedID } }
+
+    var unusedSelection: Binding<UnusedItem.ID?> {
+        Binding(get: { self.selectedUnusedID }, set: { v in DispatchQueue.main.async { self.selectedUnusedID = v } })
+    }
+
+    func scanUnused() {
+        guard !isScanningUnused else { return }
+        unusedItems = []
+        selectedUnusedID = nil
+        isScanningUnused = true
+        let scanner = UnusedScanner(projectRoots: projectRoots)
+        unusedTask = Task {
+            for await event in scanner.run() {
+                switch event {
+                case .status(let s): unusedStatus = s
+                case .item(let i): if !unusedItems.contains(i) { unusedItems.append(i) }
+                }
+            }
+            if isScanningUnused { unusedStatus = unusedSummary }
+            isScanningUnused = false
+            hasScannedUnused = true
+        }
+    }
+
+    var unusedSummary: String {
+        let n = unusedItems.filter { $0.isUnused(days: unusedDays) }.count
+        return "\(n) of \(unusedItems.count) unused for \(Self.unusedDayChoices.first { $0.days == unusedDays }?.title ?? "\(unusedDays) days"), \(Format.size(unusedBytes))"
+    }
+
+    func cancelUnused() {
+        unusedTask?.cancel()
+        unusedTask = nil
+        isScanningUnused = false
+        unusedStatus = "Search stopped"
+    }
+
+    func askToTrashUnused(_ item: UnusedItem) {
+        guard item.canTrash else { return }
+        pendingTrash = [CleanItem(id: "unused:" + item.path, name: item.name, paths: [item.path], tier: .review, group: "Unused",
+                                  what: "An unused \(item.kind.title.lowercased().dropLast()).",
+                                  afterDelete: "You can restore it from the Trash until you empty it.",
+                                  bytes: item.bytes, fileCount: 0, modified: item.lastUsed)]
     }
 }
